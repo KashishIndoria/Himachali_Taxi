@@ -59,7 +59,7 @@ const server = http.createServer(app);
 // io.on('connection', (socket) => { ... });
 
 const PORT = process.env.PORT || 3000; // Default to 3000 for local dev
-app.listen(PORT, () => {
+server.listen(PORT, () => { // Changed from app.listen to server.listen
   console.log(`Server running on port ${PORT}`);
 });
 
