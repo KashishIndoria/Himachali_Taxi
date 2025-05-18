@@ -1,95 +1,169 @@
 const Captain = require('../models/captain/captain');
-const geoUtils = require('../utils/geoUtils'); // Assuming geoUtils exists and is correct
+const Ride = require('../models/rides/rides');
+const { getIO } = require('../config/socket');
 
-/**
- * Find nearby drivers who can accept a ride
- * @param {Number} latitude - Pickup latitude
- * @param {Number} longitude - Pickup longitude
- * @param {Number} radius - Search radius in kilometers (default: 5km)
- * @param {String} vehicleType - Type of vehicle required (optional)
- * @returns {Promise<Array>} - Array of nearby captains with distance and ETA
- */
-exports.findNearbyDrivers = async (latitude, longitude, radius = 5, vehicleType = null) => {
-  try {
-    // Create a query for finding nearby captains
-    let query = {
-      isOnline: true,      // Captain must be online
-      isAvailable: true,   // Captain must be available for new rides
-      isVerified: true,    // Captain account must be verified (optional, but good practice)
-      accountStatus: 'active', // Ensure account is active
-      location: { // Use the 'location' field as defined in captain.js
-        $nearSphere: {
-          $geometry: {
-            type: 'Point',
-            coordinates: [longitude, latitude] // MongoDB uses [long, lat] format
-          },
-          $maxDistance: radius * 1000 // Convert km to meters
+class RideMatchingService {
+    constructor() {
+        this.SEARCH_RADIUS = 5000; // 5km in meters
+        this.MAX_SEARCH_TIME = 180000; // 3 minutes in milliseconds
+        this.MIN_CAPTAIN_RATING = 4.0;
+    }
+
+    async findNearbyCaptains(latitude, longitude, radius = this.SEARCH_RADIUS) {
+        try {
+            const captains = await Captain.find({
+                isOnline: true,
+                isAvailable: true,
+                'location.coordinates': {
+                    $nearSphere: {
+                        $geometry: {
+                            type: 'Point',
+                            coordinates: [longitude, latitude]
+                        },
+                        $maxDistance: radius
+                    }
+                },
+                rating: { $gte: this.MIN_CAPTAIN_RATING }
+            }).select('_id name phone vehicleDetails location rating currentRide');
+
+            return captains;
+        } catch (error) {
+            console.error('Error finding nearby captains:', error);
+            throw error;
         }
-      }
-    };
-
-    // Add vehicle type filter if specified
-    if (vehicleType) {
-      // Assuming vehicle details are stored like this, adjust if needed
-      query['vehicleDetails.type'] = vehicleType; 
     }
 
-    // Find nearby captains, select necessary fields
-    const captains = await Captain.find(query)
-      .select('_id firstName lastName phone vehicleDetails rating location socketId') // Added socketId
-      .limit(10); // Limit the number of drivers initially found
+    async startRideMatching(ride) {
+        const io = getIO();
+        let searchRadius = this.SEARCH_RADIUS;
+        let startTime = Date.now();
+        let matchFound = false;
 
-    if (!captains || captains.length === 0) {
-        console.log(`No drivers found near ${latitude}, ${longitude} within ${radius}km.`);
-        return [];
+        const searchInterval = setInterval(async () => {
+            try {
+                if (Date.now() - startTime > this.MAX_SEARCH_TIME) {
+                    clearInterval(searchInterval);
+                    await this.handleNoMatchFound(ride);
+                    return;
+                }
+
+                const nearbyCaptains = await this.findNearbyCaptains(
+                    ride.pickupLocation.coordinates[1],
+                    ride.pickupLocation.coordinates[0],
+                    searchRadius
+                );
+
+                if (nearbyCaptains.length > 0) {
+                    matchFound = true;
+                    clearInterval(searchInterval);
+                    await this.notifyCaptains(nearbyCaptains, ride);
+                } else {
+                    // Increase search radius by 1km each iteration
+                    searchRadius += 1000;
+                }
+            } catch (error) {
+                console.error('Error in ride matching:', error);
+                clearInterval(searchInterval);
+                await this.handleNoMatchFound(ride);
+            }
+        }, 10000); // Check every 10 seconds
     }
 
-    console.log(`Found ${captains.length} potential drivers near ${latitude}, ${longitude}.`);
+    async notifyCaptains(captains, ride) {
+        const io = getIO();
+        const rideDetails = {
+            rideId: ride._id,
+            pickupLocation: ride.pickupLocation,
+            dropLocation: ride.dropLocation,
+            fare: ride.fare,
+            distance: ride.distance,
+            estimatedTime: ride.estimatedTime
+        };
 
-    // Calculate distance and ETA for each captain
-    const driversWithDetails = captains.map(captain => {
-      let distance = 0;
-      let etaMinutes = 0;
+        // Update ride status to searching
+        await Ride.findByIdAndUpdate(ride._id, { status: 'searching' });
 
-      if (captain.location && captain.location.coordinates) {
-          // Calculate exact distance using geoUtils
-          distance = geoUtils.calculateDistance(
-            latitude, longitude,
-            captain.location.coordinates[1], // Lat
-            captain.location.coordinates[0]  // Long
-          );
+        // Notify user that we're finding a captain
+        io.to(`user:${ride.userId}`).emit('rideStatus', {
+            status: 'searching',
+            message: 'Looking for nearby captains'
+        });
 
-          // Calculate ETA based on distance (e.g., average speed of 30km/h)
-          // Adjust speed based on region or traffic data if available
-          const averageSpeedKmh = 30;
-          etaMinutes = Math.round((distance / averageSpeedKmh) * 60);
-      }
+        // Notify each captain in sequence with a delay
+        for (const captain of captains) {
+            io.to(`captain:${captain._id}`).emit('newRideRequest', {
+                ...rideDetails,
+                expiresIn: 30 // seconds to respond
+            });
 
-      return {
-        _id: captain._id,
-        name: `${captain.firstName} ${captain.lastName || ''}`.trim(),
-        phone: captain.phone,
-        rating: captain.rating || 5, // Default rating if none
-        distance: distance.toFixed(2), // Distance in km
-        eta: etaMinutes, // Estimated time in minutes
-        vehicleDetails: captain.vehicleDetails, // Include vehicle details
-        location: captain.location, // Include current location
-        socketId: captain.socketId // Include socketId for direct communication if needed later
-      };
-    });
+            // Wait for 30 seconds before trying next captain
+            await new Promise(resolve => setTimeout(resolve, 30000));
 
-    // Sort drivers, e.g., by ETA or a combination of factors
-    driversWithDetails.sort((a, b) => a.eta - b.eta); // Sort by lowest ETA
+            // Check if ride was accepted
+            const updatedRide = await Ride.findById(ride._id);
+            if (updatedRide.status === 'accepted') {
+                break;
+            }
+        }
+    }
 
-    return driversWithDetails.slice(0, 5); // Return the top 5 closest/fastest drivers
+    async handleNoMatchFound(ride) {
+        const io = getIO();
+        await Ride.findByIdAndUpdate(ride._id, {
+            status: 'cancelled',
+            cancellationReason: 'No captains available'
+        });
 
-  } catch (error) {
-    console.error('Error finding nearby drivers:', error);
-    // In a production scenario, you might want to throw a more specific error
-    // or return an empty array gracefully.
-    return []; // Return empty array on error
-  }
-};
+        io.to(`user:${ride.userId}`).emit('rideStatus', {
+            status: 'cancelled',
+            message: 'No captains available at the moment'
+        });
+    }
 
-// Remove matchRideWithDriver if it's now handled directly in socket.js
-// exports.matchRideWithDriver = async (ride) => { ... };
+    async acceptRide(rideId, captainId) {
+        try {
+            const ride = await Ride.findById(rideId);
+            const captain = await Captain.findById(captainId);
+
+            if (!ride || !captain) {
+                throw new Error('Ride or Captain not found');
+            }
+
+            if (ride.status !== 'searching') {
+                throw new Error('Ride is no longer available');
+            }
+
+            // Update ride status
+            ride.status = 'accepted';
+            ride.captainId = captainId;
+            await ride.save();
+
+            // Update captain status
+            captain.isAvailable = false;
+            captain.currentRide = rideId;
+            await captain.save();
+
+            const io = getIO();
+
+            // Notify user
+            io.to(`user:${ride.userId}`).emit('rideAccepted', {
+                rideId: ride._id,
+                captain: {
+                    id: captain._id,
+                    name: captain.name,
+                    phone: captain.phone,
+                    vehicleDetails: captain.vehicleDetails,
+                    location: captain.location,
+                    rating: captain.rating
+                }
+            });
+
+            return ride;
+        } catch (error) {
+            console.error('Error accepting ride:', error);
+            throw error;
+        }
+    }
+}
+
+module.exports = new RideMatchingService();

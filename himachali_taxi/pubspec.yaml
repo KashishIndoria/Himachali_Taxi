@@ -1,5 +1,5 @@
 name: himachali_taxi
-description: "A new Flutter project."
+description: A taxi booking application with video features
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -19,7 +19,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 version: 1.0.0+1
 
 environment:
-  sdk: ^3.6.1
+  sdk: '>=3.0.0 <4.0.0'
 
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
@@ -33,28 +33,38 @@ dependencies:
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
-  cupertino_icons: ^1.0.8
+  cupertino_icons: ^1.0.2
   http: ^1.3.0
-  google_maps_flutter: ^2.10.1
+  google_maps_flutter: ^2.5.0
   pinput: ^5.0.1
-  shared_preferences: ^2.0.0
-  provider: ^6.1.4
+  shared_preferences: ^2.2.2
+  provider: ^6.1.1
   path_provider_windows: ^2.3.0
-  location: ^8.0.0
-  socket_io_client: ^3.0.2
-  image_picker: ^1.1.2
+  location: ^5.0.3
+  socket_io_client: ^2.0.3+1
+  image_picker: ^1.0.4
   mime: ^2.0.0
   http_parser: ^4.1.2
   supabase_flutter: ^2.8.4
   path: ^1.9.0
   uuid: ^4.5.1
-  intl: ^0.20.2
+  intl: ^0.18.1
   fl_chart: ^0.70.2
   flutter_google_maps_webservices: ^1.1.1
   flutter_dotenv: ^5.2.1
-  geocoding: ^3.0.0
-  flutter_polyline_points: ^2.1.0
+  geocoding: ^2.1.1
+  flutter_polyline_points: ^2.0.0
   flutter_rating_bar: ^4.0.1
+  webrtc_interface: ^1.1.1
+  flutter_webrtc: ^0.9.47
+  permission_handler: ^11.0.1
+  dio: ^5.3.3
+  cached_network_image: ^3.3.0
+  flutter_sound: ^9.2.13
+  path_provider: ^2.1.1
+  geolocator: ^10.1.0
+  flutter_local_notifications: ^16.1.0
+  camera: ^0.10.5+5
 
 dev_dependencies:
   flutter_test:
@@ -65,7 +75,7 @@ dev_dependencies:
   # activated in the `analysis_options.yaml` file located at the root of your
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
-  flutter_lints: ^5.0.0
+  flutter_lints: ^2.0.0
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -84,6 +94,9 @@ flutter:
   #   - images/a_dot_ham.jpeg
   assets:
     - .env
+    - assets/images/
+    - assets/icons/
+    - assets/sounds/
 
     - assets/images/taxilogo.png
     - assets/images/map.png

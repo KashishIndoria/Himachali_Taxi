@@ -19,8 +19,21 @@ const pointSchema = new Schema({
     }
 }, { _id: false });
 
-// Remove the old locationSchema if it exists
-// const locationSchema = new mongoose.Schema({ ... }); // Remove this
+const locationSchema = new mongoose.Schema({
+    type: {
+        type: String,
+        enum: ['Point'],
+        default: 'Point'
+    },
+    coordinates: {
+        type: [Number],
+        required: true
+    },
+    address: {
+        type: String,
+        required: true
+    }
+});
 
 const RideSchema = new Schema({ // Use Schema alias
     user: { // Renamed from userId
@@ -56,10 +69,70 @@ const RideSchema = new Schema({ // Use Schema alias
         required: true,
         index: true // Index status for faster querying
     },
-    // Remove old fare field, use optional fields below if needed
-    // fare: { type: Number, required: true },
-
-    // Add specific timestamps
+    fare: {
+        base: { type: Number, required: true },
+        distance: { type: Number, required: true },
+        time: { type: Number, required: true },
+        total: { type: Number, required: true }
+    },
+    distance: {
+        type: Number,
+        required: true
+    },
+    estimatedTime: {
+        type: Number,
+        required: true
+    },
+    actualStartTime: Date,
+    actualEndTime: Date,
+    paymentMethod: {
+        type: String,
+        enum: ['cash', 'card', 'wallet'],
+        default: 'cash'
+    },
+    paymentStatus: {
+        type: String,
+        enum: ['pending', 'completed', 'failed'],
+        default: 'pending'
+    },
+    cancellationReason: {
+        type: String
+    },
+    cancelledBy: {
+        type: String,
+        enum: ['user', 'captain']
+    },
+    rating: {
+        user: {
+            rating: { type: Number, min: 1, max: 5 },
+            review: String,
+            createdAt: Date
+        },
+        captain: {
+            rating: { type: Number, min: 1, max: 5 },
+            review: String,
+            createdAt: Date
+        }
+    },
+    rideRoute: {
+        type: {
+            type: String,
+            enum: ['LineString'],
+            default: 'LineString'
+        },
+        coordinates: {
+            type: [[Number]],
+            default: []
+        }
+    },
+    currentLocation: {
+        type: locationSchema
+    },
+    rideMetrics: {
+        actualDistance: { type: Number, default: 0 },
+        actualDuration: { type: Number, default: 0 },
+        waitingTime: { type: Number, default: 0 }
+    },
     requestedAt: {
         type: Date,
         default: Date.now // Set when ride is created
@@ -69,17 +142,10 @@ const RideSchema = new Schema({ // Use Schema alias
     startedAt: { type: Date },
     completedAt: { type: Date },
     cancelledAt: { type: Date },
-
-    // Optional fields (can be added/used later)
     estimatedFare: { type: Number },
     finalFare: { type: Number },
-    distance: { type: Number }, // in meters or km
     duration: { type: Number }, // in seconds or minutes
     routePolyline: { type: String }, // Encoded polyline for map display
-    paymentMethod: { type: String },
-    paymentStatus: { type: String, enum: ['Pending', 'Paid', 'Failed'], default: 'Pending' }
-
-
 }, {
     timestamps: true // Automatically adds createdAt and updatedAt
 });
@@ -91,11 +157,46 @@ RideSchema.index({ pickupLocation: '2dsphere' });
 RideSchema.index({ captain: 1, status: 1 });
 RideSchema.index({ user: 1, status: 1 });
 
+// Indexes for geospatial queries
+RideSchema.index({ 'pickupLocation.coordinates': '2dsphere' });
+RideSchema.index({ 'dropoffLocation.coordinates': '2dsphere' });
+RideSchema.index({ 'currentLocation.coordinates': '2dsphere' });
 
-module.exports = mongoose.model('Ride', RideSchema);
+// Method to calculate fare
+RideSchema.methods.calculateFare = async function() {
+    const BASE_FARE = 50; // Base fare in rupees
+    const PER_KM_RATE = 12; // Rate per kilometer
+    const PER_MINUTE_RATE = 2; // Rate per minute
+    
+    this.fare = {
+        base: BASE_FARE,
+        distance: this.distance * PER_KM_RATE,
+        time: this.estimatedTime * PER_MINUTE_RATE,
+        total: BASE_FARE + (this.distance * PER_KM_RATE) + (this.estimatedTime * PER_MINUTE_RATE)
+    };
+    
+    return this.fare;
+};
 
-
-// Add geospatial index for pickupLocation
-RideSchema.index({ "pickupLocation.coordinates": '2dsphere' });
+// Method to update ride status
+RideSchema.methods.updateStatus = async function(newStatus, location = null) {
+    this.status = newStatus;
+    
+    if (location) {
+        this.currentLocation = location;
+    }
+    
+    if (newStatus === 'started') {
+        this.actualStartTime = new Date();
+    } else if (newStatus === 'completed') {
+        this.actualEndTime = new Date();
+        // Calculate actual metrics
+        this.rideMetrics.actualDuration = 
+            (this.actualEndTime - this.actualStartTime) / 1000 / 60; // in minutes
+    }
+    
+    await this.save();
+    return this;
+};
 
 module.exports = mongoose.model('Ride', RideSchema);

@@ -1,78 +1,153 @@
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
-const app = express();
-const connectDB = require('./config/db');
-const {initSocket} = require('./config/socket');
-require('dotenv').config();
+const dotenv = require('dotenv');
+const socketIO = require('socket.io');
 const http = require('http');
-const logger = require('./utils/logger'); // Assuming you have a logger utility
+const logger = require('./utils/logger');
+const jwt = require('jsonwebtoken');
+
+// Load environment variables
+dotenv.config();
+
+// Routes
+const authRoutes = require('./routes/auth.routes');
+const rideRoutes = require('./routes/ride.routes');
+const userRoutes = require('./routes/user.routes');
+
+const app = express();
+const server = http.createServer(app);
+const io = socketIO(server, {
+    cors: {
+        origin: process.env.BACKEND_URL || "http://localhost:3000",
+        methods: ["GET", "POST"]
+    }
+});
+
+// Make io available globally
+global.io = io;
 
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use('/uploads', express.static('uploads'));
 
-// //Load env vars
-// dotenv.config();
+// Database connection with retry mechanism
+const connectDB = async (retries = 5) => {
+    try {
+        await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/himachali_taxi', {
+            useNewUrlParser: true,
+            useUnifiedTopology: true,
+        });
+        console.log('Connected to MongoDB');
+    } catch (err) {
+        console.error('MongoDB connection error:', err);
+        if (retries > 0) {
+            console.log(`Retrying connection... (${retries} attempts left)`);
+            setTimeout(() => connectDB(retries - 1), 5000);
+        } else {
+            console.error('Failed to connect to MongoDB after multiple attempts');
+            process.exit(1);
+        }
+    }
+};
 
-//connect to Database 
 connectDB();
 
-// Import routes
-const authRoutes = require('./routes/authroutes');
-const userRoutes = require('./routes/userroutes');
-const captainRoutes = require('./routes/captainroutes');
-const locationRoutes = require('./routes/locationroutes');
-const uploadRoutes = require('./routes/profileroutes');
-const ratingRoutes = require('./routes/ratingroutes');
-// const rideRoutes = require('./routes/rideroutes'); // Assuming you have a ride route
+// Socket.IO connection handling
+io.on('connection', (socket) => {
+    console.log('A user connected:', socket.id);
 
-// Use routes
-app.use('/api/auth', authRoutes);
-app.use('/api/user', userRoutes);
-app.use('/api/captains', captainRoutes);
-app.use('/api/location', locationRoutes);
-app.use('/api/upload', uploadRoutes);
-app.use('/api/ratings', ratingRoutes);
-// app.use('/api/rides', rideRoutes); // Use the ride routes
+    socket.on('authenticate', async (token) => {
+        try {
+            // Verify token and get user
+            const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+            const user = await User.findById(decoded.userId);
+            
+            if (user) {
+                socket.userId = user._id;
+                socket.join(user._id.toString());
+                socket.emit('authenticated', { userId: user._id });
+                
+                if (user.role === 'CAPTAIN') {
+                    socket.join('captains');
+                }
+            }
+        } catch (error) {
+            socket.emit('auth_error', { message: 'Authentication failed' });
+        }
+    });
 
+    socket.on('location_update', async (data) => {
+        if (!socket.userId) return;
 
-// Basic route
-app.get('/', (req, res) => {
-    res.send('Himachali Taxi API is running');
+        try {
+            const user = await User.findById(socket.userId);
+            if (user && user.role === 'CAPTAIN') {
+                user.currentLocation = {
+                    type: 'Point',
+                    coordinates: [data.longitude, data.latitude]
+                };
+                await user.save();
+
+                // If captain is on a ride, notify the passenger
+                const activeRide = await Ride.findOne({
+                    captain: user._id,
+                    status: { $in: ['ACCEPTED', 'ARRIVED', 'STARTED'] }
+                });
+
+                if (activeRide) {
+                    io.to(activeRide.passenger.toString()).emit('captain_location', {
+                        rideId: activeRide._id,
+                        location: user.currentLocation
+                    });
+                }
+            }
+        } catch (error) {
+            console.error('Error updating location:', error);
+        }
+    });
+
+    socket.on('disconnect', async () => {
+        if (socket.userId) {
+            try {
+                await User.findByIdAndUpdate(socket.userId, {
+                    status: 'OFFLINE'
+                });
+            } catch (error) {
+                console.error('Error updating user status:', error);
+            }
+        }
+        console.log('User disconnected:', socket.id);
+    });
 });
+
+// Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/rides', rideRoutes);
+app.use('/api/users', userRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
     console.error(err.stack);
-    res.status(500).json({
-        status: 'error',
-        message: 'Something went wrong!'
-    });
+    res.status(500).json({ message: 'Something went wrong!' });
 });
 
-
-const server = http.createServer(app);
-// Remove socket initialization and handlers from here
-// const io = initSocket(server);
-// io.on('connection', (socket) => { ... });
-
-const PORT = process.env.PORT || 3000; // Default to 3000 for local dev
-server.listen(PORT, () => { // Changed from app.listen to server.listen
-  console.log(`Server running on port ${PORT}`);
+const PORT = process.env.PORT || 5000;
+server.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
 });
 
 // Handle unhandled promise rejections
-process.on('unhandledRejection', (err, promise) => {
-  logger.error(`Unhandled Rejection: \${err.message}`);
-  // Close server & exit process (optional but recommended in production)
-  // server.close(() => process.exit(1));
+process.on('unhandledRejection', (err) => {
+    console.error('Unhandled Rejection:', err);
+    // Close server & exit process
+    server.close(() => process.exit(1));
 });
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (err) => {
-    logger.error(`Uncaught Exception: \${err.message}`);
-    // Close server & exit process (optional but recommended in production)
-    // server.close(() => process.exit(1));
+    console.error('Uncaught Exception:', err);
+    // Close server & exit process
+    server.close(() => process.exit(1));
 });
