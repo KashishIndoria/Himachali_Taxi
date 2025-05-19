@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:himachali_taxi/models/captain/captainNavBAr.dart';
-import 'package:himachali_taxi/models/ride_model.dart'; // Use the correct Ride model
+import 'package:himachali_taxi/models/ride_model.dart';
 import 'package:himachali_taxi/provider/captain_provider.dart';
 import 'package:himachali_taxi/provider/socket_provider.dart';
 import 'package:himachali_taxi/services/captain_services.dart';
@@ -31,87 +31,209 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
   GoogleMapController? mapController;
   bool isAvailable = false;
   bool _isLoadingAvailability = false;
-  loc.Location _location = loc.Location(); // Add location instance
-  late SocketProvider _socketProvider; // Use SocketProvider
-  StreamSubscription? _rideCancelledSubscription; // Add subscription variable
+  loc.Location _location = loc.Location();
+  late SocketProvider _socketProvider;
+  StreamSubscription? _rideCancelledSubscription;
   StreamSubscription? _paymentCompletedSubscription;
   StreamSubscription? _newRideRequestSubscription;
-
-  Set<Marker> _rideMarkers = {};
-  final CaptainService _captainService =
-      CaptainService(); // Instance of your service
+  StreamSubscription? _locationSubscription;
   Timer? _locationUpdatedTimer;
   loc.LocationData? _currentLocationData;
+  bool _isMapReady = false;
+  bool _hasLocationPermission = false;
+
+  Set<Marker> _rideMarkers = {};
+  final CaptainService _captainService = CaptainService();
 
   @override
   void initState() {
     super.initState();
     _socketProvider = Provider.of<SocketProvider>(context, listen: false);
-    _startLocationUpdates(); // Start location updates
+    _initializeLocation();
     _setupSocketListeners();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _fetchInitialData();
-      // Listen to provider changes to update markers
       Provider.of<CaptainProvider>(context, listen: false)
           .addListener(_updateRideMarkers);
     });
   }
 
-  Future<void> _fetchInitialData() async {
-    // Ensure mounted before proceeding, especially if initState could complete
-    // and then this callback runs much later after a dispose.
-    if (!mounted) return;
-    await _refreshRides();
-    // Move map initially after fetching data and ensuring map is ready
-    // We call _moveToCurrentLocation in _onMapCreated now.
+  @override
+  void dispose() {
+    _cleanupResources();
+    super.dispose();
   }
 
-  // New method to handle map creation
-  void _onMapCreated(GoogleMapController controller) {
-    if (!mounted) return;
-    mapController = controller;
-    // Optionally move camera to current location once map is ready
-    _moveToCurrentLocation();
+  void _cleanupResources() {
+    mapController?.dispose();
+    _rideCancelledSubscription?.cancel();
+    _paymentCompletedSubscription?.cancel();
+    _newRideRequestSubscription?.cancel();
+    _locationSubscription?.cancel();
+    _locationUpdatedTimer?.cancel();
+    Provider.of<CaptainProvider>(context, listen: false)
+        .removeListener(_updateRideMarkers);
   }
 
-  // New method to move the map camera
-  Future<void> _moveToCurrentLocation() async {
-    if (!mounted) return; // Add check at the beginning
+  Future<void> _initializeLocation() async {
     try {
-      // Ensure permissions are granted (already done in _startLocationUpdates)
-      var currentLocation = await _location.getLocation();
-      if (!mounted) return; // Add check after await
+      bool serviceEnabled = await _location.serviceEnabled();
+      if (!serviceEnabled) {
+        serviceEnabled = await _location.requestService();
+        if (!serviceEnabled) {
+          _showErrorSnackBar('Location services are required for this app');
+          return;
+        }
+      }
 
-      if (currentLocation.latitude != null &&
-          currentLocation.longitude != null) {
-        if (!mounted) return; // Check before mapController usage
-        mapController?.animateCamera(
-          CameraUpdate.newLatLngZoom(
-            LatLng(currentLocation.latitude!, currentLocation.longitude!),
-            15.0, // Adjust zoom level as needed
-          ),
-        );
+      loc.PermissionStatus permission = await _location.hasPermission();
+      if (permission == loc.PermissionStatus.denied) {
+        permission = await _location.requestPermission();
+        if (permission != loc.PermissionStatus.granted) {
+          _showErrorSnackBar('Location permission is required for this app');
+          return;
+        }
       }
+
+      setState(() {
+        _hasLocationPermission = true;
+      });
+
+      _startLocationUpdates();
     } catch (e) {
-      if (mounted) {
-        print("Error getting initial location for map centering: $e");
-      }
-      // Handle cases where location cannot be fetched
+      _showErrorSnackBar('Error initializing location: $e');
     }
   }
 
-  Future<void> _refreshRides() async {
-    if (!mounted) return; // Check at the beginning
-    final provider = Provider.of<CaptainProvider>(context, listen: false);
-    // listen:false makes context usage safer here, but an extra mounted check is harmless.
+  void _showErrorSnackBar(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  void _startLocationUpdates() {
+    if (!_hasLocationPermission) return;
+
+    _locationSubscription?.cancel();
+    _locationSubscription = _location.onLocationChanged.listen(
+      (loc.LocationData currentLocation) {
+        if (!mounted) return;
+        setState(() {
+          _currentLocationData = currentLocation;
+        });
+
+        if (isAvailable) {
+          _socketProvider.socketService.updateCaptainLocation(
+            widget.userId,
+            currentLocation.latitude ?? 0.0,
+            currentLocation.longitude ?? 0.0,
+            heading: currentLocation.heading,
+            speed: currentLocation.speed,
+          );
+        }
+      },
+      onError: (e) {
+        _showErrorSnackBar('Error updating location: $e');
+      },
+    );
+
+    _startSendingLocationUpdates();
+  }
+
+  void _startSendingLocationUpdates() {
+    _locationUpdatedTimer?.cancel();
+    _locationUpdatedTimer =
+        Timer.periodic(const Duration(seconds: 30), (timer) async {
+      if (!mounted || !isAvailable) return;
+
+      try {
+        final location = await _location.getLocation();
+        await _captainService.updateLocation(location);
+      } catch (e) {
+        _showErrorSnackBar('Error sending location update: $e');
+      }
+    });
+  }
+
+  void _setupSocketListeners() {
+    _socketProvider.socketService
+        .connectAndListen(widget.token, widget.userId, 'captain');
+    _setupRideListeners();
+  }
+
+  void _setupRideListeners() {
+    _rideCancelledSubscription?.cancel();
+    _rideCancelledSubscription = _socketProvider
+        .socketService.rideCancelledUpdates
+        .listen(_handleRideCancelled, onError: (e) {
+      _showErrorSnackBar('Error in ride cancellation listener: $e');
+    });
+
+    _paymentCompletedSubscription?.cancel();
+    _paymentCompletedSubscription = _socketProvider
+        .socketService.rideCompletedUpdates
+        .listen(_handlePaymentCompleted, onError: (e) {
+      _showErrorSnackBar('Error in payment completion listener: $e');
+    });
+
+    _newRideRequestSubscription?.cancel();
+    _newRideRequestSubscription = _socketProvider.socketService.newRideRequests
+        .listen(_handleNewRideRequest, onError: (e) {
+      _showErrorSnackBar('Error in new ride request listener: $e');
+    });
+  }
+
+  void _handleRideCancelled(dynamic data) async {
     if (!mounted) return;
-    await provider.fetchAvailableRides();
-    // No setState or further context use here, so this should be fine.
+
+    final rideId = data?['rideId'] as String?;
+    if (rideId != null) {
+      Provider.of<CaptainProvider>(context, listen: false)
+          .removeRideById(rideId);
+    }
+
+    if (Navigator.canPop(context)) {
+      Navigator.of(context).pop();
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('A ride request was cancelled'),
+        backgroundColor: Colors.orange,
+      ),
+    );
+
+    await _refreshRides();
+  }
+
+  void _handlePaymentCompleted(dynamic data) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Payment received for a ride'),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+
+  void _handleNewRideRequest(dynamic data) async {
+    if (!mounted) return;
+    await _refreshRides();
+  }
+
+  Future<void> _fetchInitialData() async {
+    if (!mounted) return;
+    await _refreshRides();
   }
 
   void _updateRideMarkers() {
-    if (!mounted) return; // Check before provider access
+    if (!mounted) return;
     final provider = Provider.of<CaptainProvider>(context, listen: false);
     final Set<Marker> markers = {};
     for (var ride in provider.availableRides) {
@@ -121,12 +243,11 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
               markerId: MarkerId('ride_${ride.id}'),
               position: LatLng(ride.pickupLat!, ride.pickupLng!),
               icon: BitmapDescriptor.defaultMarkerWithHue(
-                  BitmapDescriptor.hueGreen), // Example icon
+                  BitmapDescriptor.hueGreen),
               infoWindow: InfoWindow(
                 title: 'Ride Request: ₹${ride.fare.toStringAsFixed(0)}',
                 snippet: ride.pickupAddress ?? 'Tap for details',
                 onTap: () {
-                  // Show details when marker info window is tapped
                   _showRideDetailsBottomSheet(ride);
                 },
               ),
@@ -147,119 +268,6 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
     }
   }
 
-  void _startLocationUpdates() async {
-    // No direct context usage or setState here, but async operations follow.
-    // Initial checks for service/permission are fine
-    bool serviceEnabled;
-    loc.PermissionStatus permissionGranted;
-
-    // Check if location service is enabled
-    serviceEnabled = await _location.serviceEnabled();
-    if (!serviceEnabled) {
-      serviceEnabled = await _location.requestService();
-      if (!serviceEnabled) {
-        return;
-      }
-    }
-
-    // Check location permissions
-    permissionGranted = await _location.hasPermission();
-    if (permissionGranted == loc.PermissionStatus.denied) {
-      permissionGranted = await _location.requestPermission();
-      if (permissionGranted != loc.PermissionStatus.granted) {
-        return;
-      }
-    }
-
-    // Start listening to location changes
-    // _location.onLocationChanged.listen((loc.LocationData currentLocation) {
-    //   if (!mounted) return; // Good practice if this listener were active
-    //   if (isAvailable) {
-    //     _socketProvider.socketService.updateCaptainLocation(
-    //       widget.userId,
-    //       currentLocation.latitude ?? 0.0,
-    //       currentLocation.longitude ?? 0.0,
-    //       heading: currentLocation.heading,
-    //       speed: currentLocation.speed,
-    //     );
-    //   }
-    // });
-    print(
-        "Location service enabled and permissions granted. HTTP updates will start if captain goes online.");
-  }
-
-  void _setupSocketListeners() {
-    // Listen for ride cancellations (if needed on captain side)
-    _rideCancelledSubscription?.cancel(); // Cancel previous if any
-    _rideCancelledSubscription =
-        _socketProvider.socketService.rideCancelledUpdates.listen((data) async {
-      if (!mounted) return; // Check at the start of the callback
-
-      final rideId = data?['rideId'] as String?;
-      if (rideId != null) {
-        if (!mounted) return;
-        Provider.of<CaptainProvider>(context, listen: false)
-            .removeRideById(rideId);
-      }
-
-      if (!mounted) return;
-      if (Navigator.canPop(context)) {
-        Navigator.of(context).pop();
-      }
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('A ride request was cancelled'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      if (!mounted) return;
-      _refreshRides();
-    });
-
-    // Listen for payment completion (if needed)
-    _paymentCompletedSubscription?.cancel(); // Cancel previous if any
-    _paymentCompletedSubscription =
-        _socketProvider.socketService.rideCompletedUpdates.listen((data) async {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Payment received for a ride'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    });
-
-    _newRideRequestSubscription?.cancel();
-    _newRideRequestSubscription =
-        _socketProvider.socketService.newRideRequests.listen((data) {
-      if (!mounted) return;
-
-      if (data is Map<String, dynamic>) {
-        if (data['event'] == 'rideTaken') {
-          final rideData = data['data'] as Map<String, dynamic>?;
-          final rideId = rideData?['rideId'] as String?;
-          if (rideId != null) {
-            if (!mounted) return;
-            Provider.of<CaptainProvider>(context, listen: false)
-                .removeRideById(rideId);
-            if (!mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('A ride request was taken by another captain.'),
-                backgroundColor: Colors.blueGrey,
-              ),
-            );
-          }
-        } else {
-          if (!mounted) return;
-          _refreshRides();
-        }
-      } else {}
-    });
-  }
-
   void _showRideDetailsBottomSheet(Ride ride) {
     if (!mounted) return;
 
@@ -272,7 +280,7 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
 
     showModalBottomSheet(
       context: context,
-      isScrollControlled: true, // Allows sheet to take more height
+      isScrollControlled: true,
       builder: (context) {
         return Padding(
           padding: const EdgeInsets.all(16.0),
@@ -280,7 +288,6 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Header
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -292,12 +299,9 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
                 ],
               ),
               const Divider(),
-
-              // User Info
               ListTile(
                 leading: CircleAvatar(
                   radius: 20,
-                  // backgroundImage: ride.userProfileImage != null ? NetworkImage(ride.userProfileImage!) : null,
                   child: Icon(Icons.person, size: 20),
                 ),
                 title: Text(ride.userName ?? 'Passenger',
@@ -320,8 +324,6 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
                 ),
               ),
               const Divider(height: 15, thickness: 1),
-
-              // Locations
               _buildLocationItem(
                 icon: Icons.my_location,
                 title: 'Pickup',
@@ -336,27 +338,20 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
                 color: Colors.red,
               ),
               const SizedBox(height: 8),
-
-              // Request Time
               if (ride.createdAt != null)
                 Padding(
-                  padding: const EdgeInsets.only(
-                      left: 40.0), // Align with address text
+                  padding: const EdgeInsets.only(left: 40.0),
                   child: Text(
                     'Requested: ${timeFormat.format(ride.createdAt!.toLocal())}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
-
               const Divider(height: 20, thickness: 1),
-
-              // Accept/Decline Buttons
               Row(
                 children: [
                   Expanded(
                     child: OutlinedButton(
-                      onPressed: () => _declineRideRequest(
-                          ride.id), // Use new decline method
+                      onPressed: () => _declineRideRequest(ride.id),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: Colors.red,
                         side: const BorderSide(color: Colors.red),
@@ -367,8 +362,7 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: ElevatedButton(
-                      onPressed: () => _acceptRideRequest(
-                          ride.id), // Use modified accept method
+                      onPressed: () => _acceptRideRequest(ride.id),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: primaryCaptainColor,
                         foregroundColor: themeProvider.isDarkMode
@@ -380,7 +374,7 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 10), // Padding at bottom
+              const SizedBox(height: 10),
             ],
           ),
         );
@@ -478,152 +472,56 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
     }
   }
 
-  void _toggleAvailability(bool value) async {
+  Future<void> _refreshRides() async {
+    if (!mounted) return;
+    final provider = Provider.of<CaptainProvider>(context, listen: false);
+    await provider.fetchAvailableRides();
+  }
+
+  Future<void> _moveToCurrentLocation() async {
+    if (!mounted || !_isMapReady) return;
+    try {
+      final location = await _location.getLocation();
+      if (location.latitude != null && location.longitude != null) {
+        mapController?.animateCamera(
+          CameraUpdate.newLatLngZoom(
+            LatLng(location.latitude!, location.longitude!),
+            15.0,
+          ),
+        );
+      }
+    } catch (e) {
+      _showErrorSnackBar('Error moving to current location: $e');
+    }
+  }
+
+  Future<void> _toggleAvailability(bool value) async {
     if (!mounted) return;
     setState(() {
       _isLoadingAvailability = true;
     });
 
     try {
-      final actualAvailability =
-          await _captainService.toggleAvailability(value);
-
-      if (!mounted) return;
-
+      await _captainService.toggleAvailability(value);
       setState(() {
-        isAvailable = actualAvailability;
-        _isLoadingAvailability = false;
+        isAvailable = value;
       });
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content:
-              Text(isAvailable ? 'You are now ONLINE' : 'You are now OFFLINE'),
-          duration: Duration(seconds: 2),
-        ),
-      );
-
-      if (!mounted) return;
-      final provider = Provider.of<CaptainProvider>(context, listen: false);
-
-      if (isAvailable) {
-        if (!mounted) return;
-        _startSendingLocationUpdates();
-        await Future.delayed(const Duration(milliseconds: 2000));
-        if (!mounted) return;
-        await provider.fetchAvailableRides();
-        if (!mounted) return;
-        _moveToCurrentLocation();
-      } else {
-        if (!mounted) return;
-        _stopSendingLocationUpdates();
-        if (!mounted) return;
-        provider.clearRides();
-        if (!mounted) return;
-        setState(() => _rideMarkers.clear());
-      }
     } catch (e) {
+      _showErrorSnackBar('Error toggling availability: $e');
+      rethrow;
+    } finally {
       if (mounted) {
         setState(() {
           _isLoadingAvailability = false;
         });
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to update status: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
       }
     }
   }
-
-  void _startSendingLocationUpdates() {
-    if (!mounted) return;
-    _stopSendingLocationUpdates();
-
-    _locationUpdatedTimer =
-        Timer.periodic(const Duration(seconds: 15), (timer) {
-      if (!mounted) {
-        timer.cancel();
-        return;
-      }
-      if (isAvailable) {
-        _sendLocationUpdate();
-      } else {
-        _stopSendingLocationUpdates();
-      }
-    });
-    if (isAvailable) {
-      if (mounted) {
-        _sendLocationUpdate();
-      }
-    }
-  }
-
-  void _stopSendingLocationUpdates() {
-    _locationUpdatedTimer?.cancel();
-    _locationUpdatedTimer = null;
-  }
-
-  Future<void> _sendLocationUpdate() async {
-    if (!mounted) return;
-
-    try {
-      _currentLocationData = await _location.getLocation();
-      if (!mounted) return;
-
-      if (_currentLocationData != null &&
-          _currentLocationData!.latitude != null &&
-          _currentLocationData!.longitude != null) {
-        bool success =
-            await _captainService.updateCaptainLocation(_currentLocationData!);
-        if (!mounted) return;
-
-        if (!success) {}
-      } else {}
-    } catch (e) {
-      if (mounted) {}
-    }
-  }
-  // void _startSendingLocationUpdates() {
-  //   print("TODO: Implement _startSendingLocationUpdates (e.g., start timer)");
-  //   // Example: Start a timer to call _sendLocationUpdate periodically
-  //   _locationUpdatedTimer?.cancel();
-  //   _locationUpdatedTimer = Timer.periodic(Duration(seconds: 30), (timer) {
-  //     _sendLocationUpdate();
-  //   });
-  // }
-
-  // void _stopSendingLocationUpdates() {
-  //   print("TODO: Implement _stopSendingLocationUpdates (e.g., cancel timer)");
-  //   _locationUpdatedTimer?.cancel();
-  // }
-
-  // Future<void> _sendLocationUpdate() async {
-  //   print("TODO: Implement _sendLocationUpdate (get location and send via HTTP)");
-  //   try {
-  //     _currentLocationData = await _location.getLocation();
-  //     if (_currentLocationData?.latitude != null && _currentLocationData?.longitude != null) {
-  //       // await _apiService.updateCaptainLocationHttp(
-  //       //   widget.userId,
-  //       //   _currentLocationData!.latitude!,
-  //       //   _currentLocationData!.longitude!,
-  //       //   // Add other relevant data like heading, speed if needed
-  //       // );
-  //       print("Location update sent via HTTP (simulated)");
-  //     }
-  //   } catch (e) {
-  //     print("Error sending location update via HTTP: $e");
-  //   }
-  // }
 
   @override
   Widget build(BuildContext context) {
     return Consumer<ThemeProvider>(
       builder: (context, themeProvider, _) {
-        // Get CaptainProvider instance here to access its state
         final captainProvider = Provider.of<CaptainProvider>(context);
 
         final onPrimaryCaptainColor = themeProvider.isDarkMode
@@ -655,7 +553,7 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
             ),
             backgroundColor: primaryCaptainColor,
             actions: [
-              if (isAvailable) // Only show refresh if online
+              if (isAvailable)
                 IconButton(
                   icon: Icon(Icons.refresh, color: onPrimaryCaptainColor),
                   onPressed: captainProvider.isLoading ? null : _refreshRides,
@@ -693,12 +591,10 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
           ),
           body: Stack(
             children: [
-              _buildHomeMapView(themeProvider), // Map view
-              // Optional: Show loading indicator for rides over the map
+              _buildHomeMapView(themeProvider),
               if (captainProvider.isLoading &&
                   captainProvider.availableRides.isEmpty)
                 Center(child: CircularProgressIndicator()),
-              // Optional: Show error message for rides over the map
               if (isAvailable) _buildRideOverlay(captainProvider),
               if (captainProvider.errorMessage != null &&
                   captainProvider.availableRides.isEmpty &&
@@ -727,9 +623,6 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
   }
 
   Widget _buildRideOverlay(CaptainProvider captainProvider) {
-    // Accept provider
-    // ... existing loading and error checks using captainProvider.isLoading and captainProvider.errorMessage ...
-
     if (captainProvider.availableRides.isEmpty && !captainProvider.isLoading) {
       return Positioned(
         bottom: 0,
@@ -749,13 +642,12 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
       );
     }
 
-    // --- Display Ride List using Provider data (Ride model) ---
     return Positioned(
       bottom: 0,
       left: 0,
       right: 0,
       child: Container(
-        height: MediaQuery.of(context).size.height * 0.3, // Limit height
+        height: MediaQuery.of(context).size.height * 0.3,
         margin: const EdgeInsets.all(16.0),
         decoration: BoxDecoration(
           color: Theme.of(context).cardColor,
@@ -773,7 +665,6 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 12.0),
               child: Text(
-                // Use provider's list length
                 'Available Rides (${captainProvider.availableRides.length})',
                 style: Theme.of(context)
                     .textTheme
@@ -784,17 +675,14 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
             const Divider(height: 1),
             Expanded(
               child: ListView.separated(
-                // Use provider's list length
                 itemCount: captainProvider.availableRides.length,
                 separatorBuilder: (context, index) =>
                     const Divider(height: 1, indent: 16, endIndent: 16),
                 itemBuilder: (context, index) {
-                  // Get Ride object from provider's list
                   final ride = captainProvider.availableRides[index];
                   return ListTile(
                     leading:
                         const Icon(Icons.pin_drop_outlined, color: Colors.blue),
-                    // Use Ride model fields
                     title: Text(ride.pickupAddress ?? 'Pickup Location',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -803,10 +691,8 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
                         maxLines: 1, overflow: TextOverflow.ellipsis),
                     trailing: Text('₹${ride.fare.toStringAsFixed(0)}',
                         style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16)), // Use fare
-                    onTap: () =>
-                        _showRideDetailsBottomSheet(ride), // Pass Ride object
+                            fontWeight: FontWeight.bold, fontSize: 16)),
+                    onTap: () => _showRideDetailsBottomSheet(ride),
                   );
                 },
               ),
@@ -821,15 +707,19 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
     return Stack(
       children: [
         GoogleMap(
-          // onMapCreated: (GoogleMapController controller) {
-          //   mapController = controller;
-          onMapCreated: _onMapCreated,
-          initialCameraPosition: CameraPosition(
-            target: LatLng(31.1048, 77.1734),
-            zoom: 11.0,
+          onMapCreated: (controller) {
+            mapController = controller;
+            setState(() {
+              _isMapReady = true;
+            });
+            _moveToCurrentLocation();
+          },
+          initialCameraPosition: const CameraPosition(
+            target: LatLng(0, 0),
+            zoom: 15,
           ),
-          myLocationEnabled: true,
-          myLocationButtonEnabled: true,
+          myLocationEnabled: _hasLocationPermission,
+          myLocationButtonEnabled: _hasLocationPermission,
           mapToolbarEnabled: true,
           zoomControlsEnabled: true,
           compassEnabled: true,
@@ -875,9 +765,9 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
                           : LightColors.subtext,
                     ),
                   ),
-                  SizedBox(height: 16), // Add some space before the button
+                  SizedBox(height: 16),
                   SizedBox(
-                    width: double.infinity, // Make the button take full width
+                    width: double.infinity,
                     child: ElevatedButton(
                       onPressed: _isLoadingAvailability
                           ? null
@@ -885,28 +775,26 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor:
                             isAvailable ? Colors.red : Colors.green,
-                        foregroundColor: Colors.white, // Ensure text is visible
+                        foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
-                          // Use shape instead of borderRadius directly
                           borderRadius: BorderRadius.circular(8),
                         ),
                       ),
-                      child:
-                          _isLoadingAvailability // Use the correct state variable
-                              ? SizedBox(
-                                  height: 20,
-                                  width: 20,
-                                  child: CircularProgressIndicator(
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : Text(
-                                  isAvailable ? 'Go Offline' : 'Go Online',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
+                      child: _isLoadingAvailability
+                          ? SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(
+                                color: Colors.white,
+                              ),
+                            )
+                          : Text(
+                              isAvailable ? 'Go Offline' : 'Go Online',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                     ),
                   ),
                 ],
@@ -916,14 +804,5 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
         ),
       ],
     );
-  }
-
-  @override
-  void dispose() {
-    _rideCancelledSubscription?.cancel();
-    _paymentCompletedSubscription?.cancel();
-    _locationUpdatedTimer?.cancel();
-    _newRideRequestSubscription?.cancel();
-    super.dispose();
   }
 }

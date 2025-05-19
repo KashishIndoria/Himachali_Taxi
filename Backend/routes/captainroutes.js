@@ -5,43 +5,25 @@ const protect = require('../middleware/authMiddleware');
 
 console.log("Available controller functions:", Object.keys(captainController));
 
-// Get captain's profile
+// Profile Management Routes
 router.get('/profile/:captainId', protect, captainController.getCaptainProfile);
-
-// Update captain's profile
 router.put('/profile', protect, captainController.updateCaptainProfile);
-
-// Update captain's profile image
 router.put('/update-profile-image', protect, captainController.updateProfileImage);
 
-// Get captain status
+// Status and Availability Routes
 router.get('/status', protect, captainController.getCaptainStatus);
-
-// Toggle captain availability
 router.post('/toggle-availability', protect, captainController.toggleAvailability);
-
-// Update captain location
 router.post('/update-location', protect, captainController.updateLocation);
 
-// Get captain ride history
+// Ride Management Routes
 router.get('/rides', protect, captainController.getRideHistory);
-
-// Get captain earnings
 router.get('/earnings', protect, captainController.getEarnings);
-
-// Get available rides near the captain
 router.get('/available-rides', protect, captainController.getAvailableRides);
-
-// Accept a ride request
 router.post('/accept-ride', protect, captainController.acceptRideRequest);
-
-// Decline a ride request
-router.post('/decline-ride', protect, captainController.declineRideRequest);
-
-// Complete a ride
+router.post('/decline-ride/:rideId', protect, captainController.declineRideRequest);
 router.post('/complete-ride', protect, captainController.completeRide);
-
-// Cancel a ride
 router.post('/cancel-ride', protect, captainController.cancelRideByDriver);
+router.post('/arrive', protect, captainController.markAsArrived);
+router.post('/start-ride', protect, captainController.startRide);
 
 module.exports = router;

@@ -6,18 +6,22 @@ const captainSchema = new mongoose.Schema({
         type: String,
         required: [true, 'First name is required'],
         trim: true,
+        minlength: [2, 'First name must be at least 2 characters long'],
+        maxlength: [50, 'First name cannot exceed 50 characters']
     },
     lastName: {
         type: String,
         required: [true, 'Last name is required'],
         trim: true,
+        minlength: [2, 'Last name must be at least 2 characters long'],
+        maxlength: [50, 'Last name cannot exceed 50 characters']
     },
     email: {
         type: String,
         required: [true, 'Email is required'],
         unique: true,
-        lowercase: true,
         trim: true,
+        lowercase: true,
         match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please enter a valid email']
     },
     phone: {
@@ -25,125 +29,192 @@ const captainSchema = new mongoose.Schema({
         required: [true, 'Phone number is required'],
         unique: true,
         trim: true,
+        match: [/^\+?[1-9]\d{9,14}$/, 'Please enter a valid phone number']
     },
     password: {
         type: String,
         required: [true, 'Password is required'],
-        minlength: [6, 'Password must be at least 6 characters'],
-        select: false // Password won't be returned by default in queries
+        minlength: [6, 'Password must be at least 6 characters long'],
+        select: false
     },
     profileImage: {
         type: String,
-        default: '',
+        validate: {
+            validator: function(v) {
+                return !v || /^https?:\/\/.+\.(jpg|jpeg|png|gif)$/i.test(v);
+            },
+            message: 'Profile image must be a valid image URL'
+        }
     },
     vehicleDetails: {
-        make: String,
-        model: String,
-        year: Number,
-        licensePlate: {
+        model: {
             type: String,
-            unique: true,
-            sparse: true // Allows null values but enforces uniqueness for non-null values
+            required: [true, 'Vehicle model is required'],
+            trim: true
         },
-        color: String
+        plateNumber: {
+            type: String,
+            required: [true, 'Plate number is required'],
+            trim: true,
+            uppercase: true
+        },
+        color: {
+            type: String,
+            required: [true, 'Vehicle color is required'],
+            trim: true
+        },
+        year: {
+            type: Number,
+            required: [true, 'Vehicle year is required'],
+            min: [1900, 'Invalid vehicle year'],
+            max: [new Date().getFullYear() + 1, 'Invalid vehicle year']
+        }
     },
     drivingLicense: {
-        number: String,
-        expiry: Date,
-        state: String,
+        number: {
+            type: String,
+            required: [true, 'License number is required'],
+            trim: true,
+            uppercase: true
+        },
+        expiryDate: {
+            type: Date,
+            required: [true, 'License expiry date is required'],
+            validate: {
+                validator: function(v) {
+                    return v > new Date();
+                },
+                message: 'License must not be expired'
+            }
+        },
+        issuingAuthority: {
+            type: String,
+            required: [true, 'Issuing authority is required'],
+            required: [true, 'License state is required'],
+            trim: true
+        },
         verified: {
             type: Boolean,
-            default: false,
-        },
+            default: false
+        }
     },
-    location: { // GeoJSON Point
+    location: {
         type: {
             type: String,
             enum: ['Point'],
-            default: 'Point',
+            default: 'Point'
         },
         coordinates: {
-            type: [Number], // [longitude, latitude]
+            type: [Number],
             default: [0, 0],
+            validate: {
+                validator: function(v) {
+                    return v.length === 2 && 
+                           v[0] >= -180 && v[0] <= 180 && // longitude
+                           v[1] >= -90 && v[1] <= 90;     // latitude
+                },
+                message: 'Invalid coordinates'
+            }
         },
-        heading: { // Optional: Direction the captain is facing
+        heading: {
             type: Number,
             default: 0,
+            min: 0,
+            max: 360
         },
-        speed: { // Optional: Current speed
+        speed: {
             type: Number,
             default: 0,
+            min: 0,
+            max: 200
         },
-        lastUpdated: { // Timestamp of the last location update
+        lastUpdated: {
             type: Date,
-            default: Date.now,
-        },
+            default: Date.now
+        }
     },
-    isOnline: { // General connection status (e.g., connected to WebSocket)
+    isOnline: {
         type: Boolean,
         default: false,
-        index: true // Index for faster querying of online captains
+        index: true
     },
-    isAvailable: { // Availability status for accepting ride requests
+    isAvailable: {
         type: Boolean,
-        default: false
+        default: false,
+        index: true
     },
-    isVerified: { // Account verification status (e.g., documents checked)
+    isVerified: {
         type: Boolean,
-        default: false
+        default: false,
+        index: true
     },
-    averageRating: { // Changed from 'rating' to 'averageRating' for clarity
+    averageRating: {
         type: Number,
         default: 0,
         min: 0,
         max: 5,
+        get: v => Math.round(v * 10) / 10 // Round to 1 decimal place
     },
-    totalRatings: { // Number of ratings received
-        type: Number,
-        default: 0
-    },
-    totalRides: { // Total completed rides
+    totalRatings: {
         type: Number,
         default: 0,
+        min: 0
     },
-    totalEarnings: { // Total earnings
+    totalRides: {
         type: Number,
         default: 0,
+        min: 0
     },
-    socketId: { // Current WebSocket connection ID
+    totalEarnings: {
+        type: Number,
+        default: 0,
+        min: 0,
+        get: v => Math.round(v * 100) / 100 // Round to 2 decimal places
+    },
+    socketId: {
         type: String,
-        default: null, // Use null instead of empty string for clarity
-        index: true // Index for potentially faster lookups by socket ID
+        default: null,
+        index: true
     },
-    deviceToken: String, // For push notifications
-    lastSeen: { // Timestamp of the last activity or connection
+    deviceToken: {
+        type: String,
+        trim: true
+    },
+    lastSeen: {
         type: Date,
         default: Date.now
     },
-    accountStatus: { // Overall account status
+    accountStatus: {
         type: String,
-        enum: ['pending', 'approved', 'rejected', 'suspended', 'inactive'], // Added 'inactive'
-        default: 'pending'
+        enum: ['pending', 'approved', 'rejected', 'suspended', 'inactive'],
+        default: 'pending',
+        index: true
     },
-    otp: { // For phone verification or password reset
+    otp: {
         code: String,
         expiresAt: Date
     },
     createdAt: {
         type: Date,
         default: Date.now,
-        immutable: true // Cannot be changed after creation
+        immutable: true
     },
     updatedAt: {
         type: Date,
-        default: Date.now,
+        default: Date.now
     }
 }, {
-    timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' } // Use Mongoose built-in timestamps
+    timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' },
+    toJSON: { getters: true }, // Enable getters when converting to JSON
+    toObject: { getters: true } // Enable getters when converting to Object
 });
 
-// Create index for geo queries
+// Create indexes
 captainSchema.index({ location: '2dsphere' });
+captainSchema.index({ 'vehicleDetails.licensePlate': 1 });
+captainSchema.index({ 'drivingLicense.number': 1 });
+captainSchema.index({ createdAt: -1 });
+captainSchema.index({ updatedAt: -1 });
 
 // Hash password before saving
 captainSchema.pre('save', async function(next) {
@@ -167,6 +238,16 @@ captainSchema.pre('save', function(next) {
 // Method to check password
 captainSchema.methods.comparePassword = async function(candidatePassword) {
     return await bcrypt.compare(candidatePassword, this.password);
+};
+
+// Method to check if captain is active
+captainSchema.methods.isActive = function() {
+    return this.accountStatus === 'approved' && !this.isSuspended;
+};
+
+// Method to check if captain can accept rides
+captainSchema.methods.canAcceptRides = function() {
+    return this.isActive() && this.isOnline && this.isAvailable && this.isVerified;
 };
 
 module.exports = mongoose.model('Captain', captainSchema);

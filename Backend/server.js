@@ -14,6 +14,10 @@ dotenv.config();
 const authRoutes = require('./routes/auth.routes');
 const rideRoutes = require('./routes/ride.routes');
 const userRoutes = require('./routes/user.routes');
+const captainRoutes = require('./routes/captainroutes');
+const locationRoutes = require('./routes/locationroutes');
+const profileRoutes = require('./routes/profileroutes');
+const ratingRoutes = require('./routes/ratingroutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -126,6 +130,10 @@ io.on('connection', (socket) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/rides', rideRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/captains', captainRoutes);
+app.use('/api/locations', locationRoutes);
+app.use('/api/profile', profileRoutes);
+app.use('/api/ratings', ratingRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

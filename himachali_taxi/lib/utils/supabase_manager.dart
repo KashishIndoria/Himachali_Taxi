@@ -63,4 +63,27 @@ class SupabaseManager {
       rethrow;
     }
   }
+
+  static Future<String?> uploadProfileImage(File imageFile, String path) async {
+    try {
+      final bytes = await imageFile.readAsBytes();
+      final fileName =
+          '${DateTime.now().millisecondsSinceEpoch}_${path.split('/').last}';
+      final fullPath = '$path/$fileName';
+
+      final response = await client.storage
+          .from('profile-images')
+          .uploadBinary(fullPath, bytes);
+
+      if (response != null) {
+        final publicUrl =
+            client.storage.from('profile-images').getPublicUrl(fullPath);
+        return publicUrl;
+      }
+      return null;
+    } catch (e) {
+      print('Error uploading image to Supabase: $e');
+      return null;
+    }
+  }
 }

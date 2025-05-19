@@ -85,7 +85,30 @@ class AppRoutes {
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Scaffold(
-                  body: Center(child: CircularProgressIndicator()),
+                  body: Center(
+                    child: CircularProgressIndicator(),
+                  ),
+                );
+              }
+
+              if (snapshot.hasError) {
+                return Scaffold(
+                  body: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Text('An error occurred'),
+                        const SizedBox(height: 16),
+                        ElevatedButton(
+                          onPressed: () {
+                            Navigator.pushReplacementNamed(
+                                context, AppRoutes.login);
+                          },
+                          child: const Text('Go to Login'),
+                        ),
+                      ],
+                    ),
+                  ),
                 );
               }
 
@@ -99,7 +122,15 @@ class AppRoutes {
               // Check if this is a captain route but user is not a captain
               final userRole = snapshot.data?['role'] ?? 'user';
               if (_isCaptainRoute(settings.name!) && userRole != 'captain') {
-                // Redirect to user home
+                // Show error and redirect to user home
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Access denied. Redirecting to home.'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                });
                 return HomeScreen(
                   userId: snapshot.data?['userId'] ?? '',
                   token: snapshot.data?['token'] ?? '',
@@ -108,7 +139,16 @@ class AppRoutes {
 
               // Check if this is a user route but user is a captain
               if (_isUserRoute(settings.name!) && userRole == 'captain') {
-                // Redirect to captain home
+                // Show error and redirect to captain home
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content:
+                          Text('Access denied. Redirecting to captain home.'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                });
                 return CaptainHomeScreen(
                   userId: snapshot.data?['userId'] ?? '',
                   token: snapshot.data?['token'] ?? '',

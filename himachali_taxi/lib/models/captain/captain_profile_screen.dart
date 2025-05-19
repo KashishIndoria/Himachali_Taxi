@@ -109,40 +109,19 @@ class _CaptainProfileScreenState extends State<CaptainProfileScreen>
   }
 
   Future<void> _fetchCaptainData() async {
-    // Ensure baseUrl is initialized
-    if (_baseUrl.isEmpty) {
-      print("Base URL not initialized. Cannot fetch data.");
-      if (mounted) {
-        setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text("Configuration error: Base URL missing.")),
-        );
-      }
-      return;
-    }
-
-    if (!mounted) return; // Check if mounted before starting async operation
+    if (!mounted) return;
     setState(() => _isLoading = true);
 
     try {
-      final captainToken = await SfManager.getToken();
-      if (captainToken == null) {
-        throw Exception("Authentication token not found.");
-      }
-
-      print('Captain token: $captainToken');
-
       final response = await http.get(
-        Uri.parse(
-            '$_baseUrl/api/captain/profile/${widget.userId}'), // Use _baseUrl
+        Uri.parse('$_baseUrl/api/captain/profile/${widget.userId}'),
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': 'Bearer $captainToken',
+          'Authorization': 'Bearer ${widget.token}',
         },
       );
 
-      if (!mounted) return; // Check again after await
+      if (!mounted) return;
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body)['data'];
@@ -152,34 +131,20 @@ class _CaptainProfileScreenState extends State<CaptainProfileScreen>
           if (data['profileImage'] != null &&
               data['profileImage'].toString().isNotEmpty) {
             String imageUrl = data['profileImage'].toString();
-
-            // Make sure URL has a proper scheme
-            if (imageUrl.startsWith('file://')) {
-              // Skip file:// URLs if they don't have a proper path
-              if (imageUrl == 'file:///' || imageUrl == 'file://') {
-                _profileImage = null;
-              } else {
-                _profileImage = imageUrl;
-              }
-            } else if (!imageUrl.startsWith('http://') &&
-                !imageUrl.startsWith('https://')) {
-              // If URL doesn't have a scheme, add https://
-              _profileImage = 'https://$imageUrl';
-            } else {
-              // URL already has proper scheme
+            if (imageUrl.startsWith('http://') ||
+                imageUrl.startsWith('https://')) {
               _profileImage = imageUrl;
+            } else {
+              _profileImage = '$_baseUrl/$imageUrl';
             }
-
-            print('Profile image URL: $_profileImage'); // For debugging
-          } else {
-            _profileImage = null;
           }
+
           // Personal info
           _firstNameController.text = data['firstName'] ?? '';
           _lastNameController.text = data['lastName'] ?? '';
           _emailController.text = data['email'] ?? '';
           _phoneController.text = data['phone'] ?? '';
-          _isEmailVerified = data['isVerified'] ?? false;
+          _isEmailVerified = data['isEmailVerified'] ?? false;
 
           // Vehicle info
           final vehicleDetails = data['vehicleDetails'] ?? {};
@@ -202,8 +167,8 @@ class _CaptainProfileScreenState extends State<CaptainProfileScreen>
           }
 
           // Statistics
-          _averageRating = (data['averageRating'] ?? data['rating'] ?? 0.0)
-              .toDouble(); // Use averageRating or fallback to rating
+          _averageRating =
+              (data['averageRating'] ?? data['rating'] ?? 0.0).toDouble();
           _totalRatings =
               (data['totalRatings'] ?? data['totalRides'] ?? 0).toInt();
           _totalRides = data['totalRides'] ?? 0;
@@ -218,12 +183,13 @@ class _CaptainProfileScreenState extends State<CaptainProfileScreen>
     } catch (e) {
       print('Error fetching captain data: $e');
       if (mounted) {
-        // Add mounted check here
         setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text(
-                  'Failed to fetch profile data: ${e.toString().replaceFirst("Exception: ", "")}')),
+            content: Text(
+                'Failed to fetch profile data: ${e.toString().replaceFirst("Exception: ", "")}'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
@@ -317,75 +283,81 @@ class _CaptainProfileScreenState extends State<CaptainProfileScreen>
   }
 
   Future<void> _pickImage() async {
-    if (!mounted) return;
     try {
+      setState(() => _isUploading = true);
+
       final ImagePicker picker = ImagePicker();
-      final XFile? pickedFile = await picker.pickImage(
+      final XFile? image = await picker.pickImage(
         source: ImageSource.gallery,
         maxWidth: 800,
         maxHeight: 800,
         imageQuality: 85,
       );
 
-      if (pickedFile != null) {
-        if (!mounted) return;
-        setState(() => _isUploading = true);
+      if (image == null) {
+        setState(() => _isUploading = false);
+        return;
+      }
 
-        // Upload to Supabase
-        final String supabaseUrl =
-            await SupabaseManager.uploadImage(File(pickedFile.path));
-
-        print('Supabase URL before update: $supabaseUrl'); // For debugging
-
-        final captainToken =
-            await SfManager.getToken(); // Get token for image update
-        if (captainToken == null) {
-          throw Exception("Authentication token not found for image update.");
-        }
-
-        // Update profile image in MongoDB
-        final response = await http.put(
-          Uri.parse(
-              '$_baseUrl/api/captain/update-profile-image'), // Use _baseUrl
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $captainToken', // Use fetched token
-          },
-          body: jsonEncode({'profileImageUrl': supabaseUrl}),
+      // Show loading indicator
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Uploading image...'),
+            duration: Duration(seconds: 2),
+          ),
         );
+      }
 
-        if (!mounted) return; // Check after await
+      // Upload to Supabase
+      final supabaseUrl = await SupabaseManager.uploadProfileImage(
+        File(image.path),
+        'captains/${widget.userId}',
+      );
 
-        if (response.statusCode == 200) {
-          if (supabaseUrl.startsWith('http://') ||
-              supabaseUrl.startsWith('https://')) {
-            setState(() => _profileImage = supabaseUrl);
-            print(
-                'profile image updated successfuly :$_profileImage'); // For debugging
-          } else {
-            print('Warning : Invalid URL format: $supabaseUrl');
-          }
+      if (supabaseUrl == null) {
+        throw Exception('Failed to upload image to storage');
+      }
 
-          await _fetchCaptainData(); // Refresh data
-        } else {
-          print(
-              'Failed to update profile image. Status: ${response.statusCode}, Body: ${response.body}');
-          throw Exception('Failed to update profile image: ${response.body}');
+      // Update profile in backend
+      final response = await http.put(
+        Uri.parse('$_baseUrl/api/captain/profile/image'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ${widget.token}',
+        },
+        body: jsonEncode({'profileImage': supabaseUrl}),
+      );
+
+      if (response.statusCode == 200) {
+        setState(() => _profileImage = supabaseUrl);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Profile image updated successfully'),
+              backgroundColor: Colors.green,
+            ),
+          );
         }
+
+        await _fetchCaptainData(); // Refresh data
+      } else {
+        throw Exception('Failed to update profile image: ${response.body}');
       }
     } catch (e) {
       print('Image upload error: $e');
       if (mounted) {
-        // Add mounted check here
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text(
-                  'Failed to upload image: ${e.toString().replaceFirst("Exception: ", "")}')),
+            content: Text(
+                'Failed to upload image: ${e.toString().replaceFirst("Exception: ", "")}'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
       if (mounted) {
-        // Add mounted check here
         setState(() => _isUploading = false);
       }
     }

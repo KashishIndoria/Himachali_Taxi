@@ -63,7 +63,7 @@ dependencies:
   flutter_sound: ^9.2.13
   path_provider: ^2.1.1
   geolocator: ^10.1.0
-  flutter_local_notifications: ^16.1.0
+  flutter_local_notifications: ^17.0.0
   camera: ^0.10.5+5
 
 dev_dependencies:
@@ -94,9 +94,6 @@ flutter:
   #   - images/a_dot_ham.jpeg
   assets:
     - .env
-    - assets/images/
-    - assets/icons/
-    - assets/sounds/
 
     - assets/images/taxilogo.png
     - assets/images/map.png
