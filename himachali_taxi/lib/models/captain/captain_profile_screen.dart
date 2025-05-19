@@ -114,7 +114,7 @@ class _CaptainProfileScreenState extends State<CaptainProfileScreen>
 
     try {
       final response = await http.get(
-        Uri.parse('$_baseUrl/api/captain/profile/${widget.userId}'),
+        Uri.parse('$_baseUrl/api/captain/profile/:captainId/${widget.userId}'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer ${widget.token}',
