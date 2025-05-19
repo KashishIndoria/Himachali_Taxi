@@ -130,7 +130,7 @@ io.on('connection', (socket) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/rides', rideRoutes);
 app.use('/api/users', userRoutes);
-app.use('/api/captains', captainRoutes);
+app.use('/api/captain', captainRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/ratings', ratingRoutes);
