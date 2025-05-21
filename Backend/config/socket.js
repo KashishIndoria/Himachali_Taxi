@@ -4,9 +4,10 @@ const User = require('../models/user/User');
 const Captain = require('../models/captain/captain');
 const Ride = require('../models/rides/rides');
 const locationService = require('../services/locationservices');
-const rideMatchingService = require('../services/rideMatchingService'); // Ensure this is imported
+const rideMatchingService = require('../services/rideMatchingService');
+const locationFallbackService = require('../services/locationFallbackService');
 const socketIo = require('socket.io');
-const logger = require('../utils/logger'); // Use existing logger
+const logger = require('../utils/logger');
 const { model } = require('mongoose');
 const { WEBRTC_CONFIG, VIDEO_CALL_TIMEOUT } = require('./video.config');
 
@@ -15,6 +16,17 @@ const onlineCaptains = new Map();
 
 // Track active rides
 const activeRides = new Map();
+
+// Rate limiting configuration
+const RATE_LIMIT = {
+    locationUpdate: {
+        maxRequests: 10, // Maximum requests per interval
+        interval: 10000, // 10 seconds
+    }
+};
+
+// Track rate limits per socket
+const rateLimits = new Map();
 
 let io;
 
@@ -46,6 +58,14 @@ const initSocket = (server) => {
     io.on('connection', (socket) => {
         console.log(`${socket.userType} connected:`, socket.userId);
 
+        // Initialize rate limit tracking for this socket
+        rateLimits.set(socket.id, {
+            locationUpdate: {
+                count: 0,
+                lastReset: Date.now()
+            }
+        });
+
         // Join user-specific room
         socket.join(`${socket.userType}:${socket.userId}`);
 
@@ -74,42 +94,91 @@ const initSocket = (server) => {
                 }
             });
 
-            // Handle captain location updates
+            // Handle captain location updates with rate limiting
             socket.on('updateLocation', async (data) => {
                 try {
+                    // Check rate limit
+                    const rateLimit = rateLimits.get(socket.id).locationUpdate;
+                    const now = Date.now();
+                    
+                    // Reset counter if interval has passed
+                    if (now - rateLimit.lastReset > RATE_LIMIT.locationUpdate.interval) {
+                        rateLimit.count = 0;
+                        rateLimit.lastReset = now;
+                    }
+
+                    // Check if rate limit exceeded
+                    if (rateLimit.count >= RATE_LIMIT.locationUpdate.maxRequests) {
+                        socket.emit('error', { 
+                            message: 'Location update rate limit exceeded. Please wait.',
+                            code: 'RATE_LIMIT_EXCEEDED'
+                        });
+                        return;
+                    }
+
+                    // Validate location data
+                    if (!isValidLocation(data)) {
+                        socket.emit('error', {
+                            message: 'Invalid location data',
+                            code: 'INVALID_LOCATION'
+                        });
+                        return;
+                    }
+
                     const { latitude, longitude } = data;
                     const location = {
                         type: 'Point',
                         coordinates: [longitude, latitude]
                     };
 
+                    // Update captain's location in database
                     await Captain.findByIdAndUpdate(socket.userId, { location });
 
-                    // If captain is in a ride, update ride location
+                    // If captain is in a ride, notify passenger
                     const captain = await Captain.findById(socket.userId);
-                    if (captain.currentRide) {
+                    if (captain?.currentRide) {
                         const ride = await Ride.findById(captain.currentRide);
                         if (ride && ['accepted', 'started'].includes(ride.status)) {
-                            ride.currentLocation = location;
-                            await ride.save();
+                            try {
+                                // Update ride location
+                                ride.currentLocation = location;
+                                await ride.save();
 
-                            // Emit location update to user
-                            io.to(`user:${ride.userId}`).emit('captainLocation', {
-                                rideId: ride._id,
-                                location: location
-                            });
+                                // Emit location update to user
+                                io.to(`user:${ride.userId}`).emit('captainLocation', {
+                                    rideId: ride._id,
+                                    location: location,
+                                    timestamp: now
+                                });
+                            } catch (error) {
+                                // If real-time update fails, add to fallback queue
+                                logger.error('Failed to update ride location in real-time:', error);
+                                await locationFallbackService.handleFailedUpdate(ride._id, location);
+                            }
                         }
                     }
 
-                    // Update captain's location in memory
-                    if (onlineCaptains.has(socket.userId)) {
-                        const info = onlineCaptains.get(socket.userId);
-                        info.location = { latitude, longitude };
-                        info.lastUpdate = new Date();
-                        onlineCaptains.set(socket.userId, info);
-                    }
+                    // Update rate limit counter
+                    rateLimit.count++;
+
                 } catch (error) {
-                    socket.emit('error', { message: 'Failed to update location' });
+                    logger.error('Error updating location:', error);
+                    socket.emit('error', {
+                        message: 'Failed to update location',
+                        code: 'UPDATE_FAILED'
+                    });
+
+                    // If captain is in a ride, add to fallback queue
+                    const captain = await Captain.findById(socket.userId);
+                    if (captain?.currentRide) {
+                        await locationFallbackService.handleFailedUpdate(
+                            captain.currentRide,
+                            {
+                                type: 'Point',
+                                coordinates: [data.longitude, data.latitude]
+                            }
+                        );
+                    }
                 }
             });
         }
@@ -155,7 +224,7 @@ const initSocket = (server) => {
         }
 
         // Handle video call signaling
-        socket.on('call-user', ({ targetUserId, offer }) => {
+        socket.on('call-user', ({ targetUserId, offer, rideId }) => {
             const timeout = setTimeout(() => {
                 io.to(`user:${targetUserId}`).emit('call-missed', {
                     from: socket.userId
@@ -167,7 +236,8 @@ const initSocket = (server) => {
             
             io.to(`user:${targetUserId}`).emit('incoming-call', {
                 from: socket.userId,
-                offer
+                offer,
+                rideId
             });
         });
 
@@ -241,10 +311,28 @@ const initSocket = (server) => {
             }
         });
 
+        // Handle reconnection
+        socket.on('reconnect_attempt', () => {
+            logger.info(`Reconnection attempt by ${socket.userType}:${socket.userId}`);
+        });
+
+        socket.on('reconnect', () => {
+            logger.info(`Reconnected: ${socket.userType}:${socket.userId}`);
+            // Rejoin rooms and restore state
+            socket.join(`${socket.userType}:${socket.userId}`);
+            if (socket.userType === 'captain') {
+                socket.join('captains');
+            }
+        });
+
+        // Handle disconnection
         socket.on('disconnect', async () => {
             if (socket.timeout) {
                 clearTimeout(socket.timeout);
             }
+
+            // Clean up rate limit tracking
+            rateLimits.delete(socket.id);
 
             if (socket.userType === 'captain') {
                 try {
@@ -254,16 +342,32 @@ const initSocket = (server) => {
                     });
                     onlineCaptains.delete(socket.userId);
                 } catch (error) {
-                    console.error('Error updating captain status on disconnect:', error);
+                    logger.error('Error updating captain status on disconnect:', error);
                 }
             }
 
-            console.log(`${socket.userType} disconnected:`, socket.userId);
+            logger.info(`${socket.userType} disconnected:`, socket.userId);
         });
     });
 
     return io;
 };
+
+// Helper function to validate location data
+function isValidLocation(data) {
+    if (!data || typeof data !== 'object') return false;
+    
+    const { latitude, longitude } = data;
+    
+    // Check if coordinates exist and are numbers
+    if (typeof latitude !== 'number' || typeof longitude !== 'number') return false;
+    
+    // Check if coordinates are within valid ranges
+    if (latitude < -90 || latitude > 90) return false;
+    if (longitude < -180 || longitude > 180) return false;
+    
+    return true;
+}
 
 module.exports = {
     initSocket,

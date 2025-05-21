@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
+import 'package:himachali_taxi/models/video_call.dart';
 
 class VideoCallService {
   final IO.Socket socket;
@@ -64,7 +65,7 @@ class VideoCallService {
     });
   }
 
-  Future<void> startCall(String targetUserId) async {
+  Future<void> startCall(String targetUserId, String rideId) async {
     try {
       await _createPeerConnection();
       await _getUserMedia();
@@ -74,6 +75,7 @@ class VideoCallService {
 
       socket.emit('call-user', {
         'targetUserId': targetUserId,
+        'rideId': rideId,
         'offer': offer.toMap(),
       });
     } catch (e) {
@@ -160,7 +162,6 @@ class VideoCallService {
   }
 
   Future<void> _handleIncomingCall(dynamic data) async {
-    // Handle incoming call offer
     if (data['offer'] != null) {
       await acceptCall(data['from'], data['offer']);
     }

@@ -31,9 +31,17 @@ class SocketProvider with ChangeNotifier {
   }
 
   // Call this method after successful login
-  void connect(String token, String userId, String userType) {
+  Future<void> connect(String token, String userId, String userType) async {
     print('SocketProvider: Attempting to connect...');
-    _socketService.connectAndListen(token, userId, userType);
+    try {
+      await _socketService.connect(token, userId, userType);
+      print('SocketProvider: Connection successful');
+    } catch (e) {
+      print('SocketProvider: Connection failed - $e');
+      _isConnected = false;
+      _socketId = null;
+      notifyListeners();
+    }
   }
 
   // Call this method on logout

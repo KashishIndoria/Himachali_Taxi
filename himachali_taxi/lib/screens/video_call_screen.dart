@@ -7,12 +7,14 @@ class VideoCallScreen extends StatefulWidget {
   final String remoteUserId;
   final String remoteUserName;
   final bool isIncoming;
+  final String rideId;
 
   const VideoCallScreen({
     Key? key,
     required this.videoCallService,
     required this.remoteUserId,
     required this.remoteUserName,
+    required this.rideId,
     this.isIncoming = false,
   }) : super(key: key);
 
@@ -34,7 +36,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
   Future<void> _initializeCall() async {
     if (!widget.isIncoming) {
-      await widget.videoCallService.startCall(widget.remoteUserId);
+      await widget.videoCallService
+          .startCall(widget.remoteUserId, widget.rideId);
     }
   }
 
@@ -144,41 +147,34 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                 ),
               ),
 
-              // Call Status Bar
+              // Caller Info
               Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
+                top: 16,
+                left: 16,
+                right: 16,
                 child: Container(
-                  padding: const EdgeInsets.all(16),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.black.withOpacity(0.8),
-                        Colors.transparent,
-                      ],
-                    ),
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(20),
                   ),
-                  child: Column(
+                  child: Row(
                     children: [
+                      CircleAvatar(
+                        radius: 20,
+                        child: Text(
+                          widget.remoteUserName[0].toUpperCase(),
+                          style: const TextStyle(fontSize: 20),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
                       Text(
                         widget.remoteUserName,
                         style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 24,
+                          fontSize: 18,
                           fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        widget.videoCallService.isCallActive
-                            ? 'Connected'
-                            : 'Connecting...',
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.8),
-                          fontSize: 16,
                         ),
                       ),
                     ],

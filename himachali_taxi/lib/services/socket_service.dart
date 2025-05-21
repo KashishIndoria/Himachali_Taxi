@@ -2,6 +2,7 @@
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:flutter_dotenv/flutter_dotenv.dart'; // To load backend URL
 import 'dart:async';
+import 'package:himachali_taxi/utils/sf_manager.dart';
 
 class SocketService {
   IO.Socket? _socket;
@@ -63,230 +64,234 @@ class SocketService {
   }
   SocketService._internal();
 
-  // Modified connectAndListen
-  void connectAndListen(String? token, String? userId, String? userType) {
+  // Reconnection configuration
+  static const int MAX_RECONNECT_ATTEMPTS = 5;
+  static const int RECONNECT_DELAY = 5000; // 5 seconds
+  int _reconnectAttempts = 0;
+  Timer? _reconnectTimer;
+  bool _isManuallyDisconnected = false;
+
+  Future<void> connect(String token, String userId, String userType) async {
     if (_socket != null && _socket!.connected) {
-      print('Socket already connected.');
-      // No need to re-authenticate manually here
-      return;
-    }
-    if (token == null) {
-      print('Socket connection aborted: No authentication token provided.');
-      _connectionStatusController
-          .add({'status': 'error', 'data': 'Authentication token missing'});
       return;
     }
 
-    print('Connecting to socket server: $_backendUrl');
-    _socket = IO.io(_backendUrl, <String, dynamic>{
-      'transports': ['websocket'],
-      'autoConnect': true, // Connect automatically
-      // Send token for authentication middleware
-      'auth': {'token': token},
-    });
+    _isManuallyDisconnected = false;
+    _reconnectAttempts = 0;
 
+    try {
+      _socket = IO.io(
+        'http://192.168.177.195:3000', // Replace with your server URL
+        IO.OptionBuilder()
+            .setTransports(['websocket'])
+            .setExtraHeaders({'Authorization': 'Bearer $token'})
+            .setAuth({'token': token})
+            .enableReconnection()
+            .setReconnectionAttempts(MAX_RECONNECT_ATTEMPTS)
+            .setReconnectionDelay(RECONNECT_DELAY)
+            .build(),
+      );
+
+      _setupSocketListeners();
+      _setupReconnectionHandlers();
+
+      // Wait for connection
+      await _waitForConnection();
+
+      // Join user-specific room
+      _socket!.emit('join', userId);
+
+      if (userType == 'captain') {
+        _socket!.emit('join', 'captains');
+      }
+    } catch (e) {
+      _errorController.add(
+          {'event': 'connection_error', 'message': 'Failed to connect: $e'});
+      _attemptReconnect();
+    }
+  }
+
+  void _setupReconnectionHandlers() {
     _socket!.onConnect((_) {
-      print('Socket connected: ${_socket!.id}');
-      _connectionStatusController
-          .add({'status': 'connected', 'socketId': _socket!.id});
-      // Authentication is handled by middleware, no need to emit 'userConnected' or 'driverConnected'
+      _reconnectAttempts = 0;
+      _errorController.add(
+          {'event': 'connection_status', 'message': 'Connected to server'});
     });
 
     _socket!.onDisconnect((_) {
-      print('Socket disconnected');
-      _connectionStatusController.add({'status': 'disconnected'});
+      if (!_isManuallyDisconnected) {
+        _errorController.add({
+          'event': 'connection_status',
+          'message': 'Disconnected from server'
+        });
+        _attemptReconnect();
+      }
     });
 
-    _socket!.onConnectError((data) {
-      print('Socket connection error: $data');
-      _connectionStatusController.add({'status': 'error', 'data': data});
-      _errorController.add({'event': 'connect_error', 'data': data});
+    _socket!.onConnectError((error) {
+      _errorController.add(
+          {'event': 'connection_error', 'message': 'Connection error: $error'});
+      _attemptReconnect();
     });
 
-    _socket!.onError((data) {
-      print('Socket error: $data');
-      _errorController.add({'event': 'general_error', 'data': data});
+    _socket!.onError((error) {
+      _errorController
+          .add({'event': 'socket_error', 'message': 'Socket error: $error'});
     });
+  }
 
-    // --- Listen for Server Events ---
-    // ... existing listeners for rideStatus, newRideRequest, etc. ...
+  void _attemptReconnect() {
+    if (_isManuallyDisconnected ||
+        _reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+      return;
+    }
+
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(Duration(milliseconds: RECONNECT_DELAY), () async {
+      _reconnectAttempts++;
+
+      if (_reconnectAttempts <= MAX_RECONNECT_ATTEMPTS) {
+        _errorController.add({
+          'event': 'reconnection_attempt',
+          'message':
+              'Attempting to reconnect (${_reconnectAttempts}/$MAX_RECONNECT_ATTEMPTS)'
+        });
+
+        try {
+          final token = await SfManager.getToken();
+          final userId = await SfManager.getUserId();
+          final userType = await SfManager.getUserRole();
+
+          if (token != null && userId != null && userType != null) {
+            await connect(token, userId, userType);
+          }
+        } catch (e) {
+          _errorController.add({
+            'event': 'reconnection_error',
+            'message': 'Failed to reconnect: $e'
+          });
+        }
+      } else {
+        _errorController.add({
+          'event': 'reconnection_failed',
+          'message': 'Max reconnection attempts reached'
+        });
+      }
+    });
+  }
+
+  Future<void> _waitForConnection() async {
+    if (_socket == null) return;
+
+    Completer<void> completer = Completer<void>();
+
+    void onConnect(_) {
+      if (!completer.isCompleted) {
+        completer.complete();
+      }
+    }
+
+    void onConnectError(error) {
+      if (!completer.isCompleted) {
+        completer.completeError(error);
+      }
+    }
+
+    _socket!.onConnect(onConnect);
+    _socket!.onConnectError(onConnectError);
+
+    try {
+      await completer.future;
+    } finally {
+      _socket!.off('connect', onConnect);
+      _socket!.off('connect_error', onConnectError);
+    }
+  }
+
+  void disconnect() {
+    _isManuallyDisconnected = true;
+    _reconnectTimer?.cancel();
+    _socket?.disconnect();
+    _socket?.dispose();
+    _socket = null;
+  }
+
+  void _setupSocketListeners() {
+    if (_socket == null) return;
+
     _socket!.on('rideStatus', (data) {
-      print('Received rideStatus: $data');
       _rideStatusController.add(data);
     });
 
     _socket!.on('newRideRequest', (data) {
-      print('Received newRideRequest: $data');
       _newRideRequestController.add(data);
     });
 
-    _socket!.on('rideAccepted', (data) {
-      print('Received rideAccepted: $data');
-      _rideAcceptedController.add(data);
-    });
-
-    _socket!.on('driverArrived', (data) {
-      // Listen for driverArrived
-      print('Received driverArrived: $data');
-      // Add a stream controller if needed, or handle directly
-      // Example: _driverArrivedController.add(data);
-      _rideStatusController
-          .add({'event': 'driverArrived', 'data': data}); // Or reuse rideStatus
-    });
-    _socket!.on('rideTaken', (data) {
-      print('Received rideTaken: $data');
-      if (data is Map<String, dynamic>) {
-        _newRideRequestController.add({
-          'event': 'rideTaken', // Add event identifier
-          'data': data
-        });
-      } else {
-        print('Received rideTaken event with unexpected data type: $data');
-        // Optionally add to error stream or handle differently
-        _errorController.add({'event': 'rideTaken_invalid_data', 'data': data});
-      }
-    });
-
-    _socket!.on('rideStarted', (data) {
-      // Listen for rideStarted
-      print('Received rideStarted: $data');
-      // Add a stream controller if needed, or handle directly
-      // Example: _rideStartedController.add(data);
-      _rideStatusController
-          .add({'event': 'rideStarted', 'data': data}); // Or reuse rideStatus
-    });
-
     _socket!.on('rideCancelled', (data) {
-      print('Received rideCancelled: $data');
       _rideCancelledController.add(data);
     });
 
     _socket!.on('rideCompleted', (data) {
-      print('Received rideCompleted: $data');
       _rideCompletedController.add(data);
     });
 
-    _socket!.on('rideTaken', (data) {
-      // Listen for rideTaken
-      print('Received rideTaken: $data');
-      // Handle event, e.g., remove ride from available list
-      // Add a stream controller if needed
-      // Example: _rideTakenController.add(data);
-      _newRideRequestController.add(
-          {'event': 'rideTaken', 'data': data}); // Or reuse newRideRequests
-    });
-
-    _socket!.on('captainLocationUpdate', (data) {
-      // Avoid excessive printing for location updates
-      // print('Received captainLocationUpdate: $data');
+    _socket!.on('captainLocation', (data) {
       _captainLocationUpdateController.add(data);
     });
 
     _socket!.on('captainAvailabilityChanged', (data) {
-      print('Received captainAvailabilityChanged: $data');
       _captainAvailabilityChangedController.add(data);
     });
 
     _socket!.on('captainOffline', (data) {
-      print('Received captainOffline: $data');
       _captainOfflineController.add(data);
     });
 
-    // Listen for generic errors from backend
     _socket!.on('error', (data) {
-      print('Received error event from server: $data');
-      _errorController.add({'event': 'server_error', 'data': data});
+      _errorController.add(data);
+    });
+
+    _socket!.on('connection_status', (data) {
+      _connectionStatusController.add(data);
     });
   }
 
-  // --- Emit Client Events ---
-
-  // REMOVE OLD AUTHENTICATION METHODS
-  // void authenticateUser(String userId, String token) { ... }
-  // void authenticateCaptain(String driverId, String token) { ... }
-
-  // Keep methods that emit application events if needed, BUT prefer HTTP requests for actions
-  // These emit methods might become redundant if actions are moved to HTTP calls
-
-  // Example: updateCaptainAvailability might be replaced by an HTTP call in ApiService
-  void updateCaptainAvailability(String captainId, bool isAvailable) {
-    // Consider moving this to an HTTP request via ApiService
+  // Add back essential ride-related methods
+  void requestRide(Map<String, dynamic> rideData) {
     if (_socket == null || !_socket!.connected) return;
-    _socket!.emit(
-        'updateCaptainAvailability', // This event might not be handled by the cleaned-up socket.js
-        {'captainId': captainId, 'isAvailable': isAvailable});
-    print("Emitted updateCaptainAvailability (Note: Backend might not listen)");
+    _socket!.emit('requestRide', rideData);
   }
 
-  // Example: updateCaptainLocation might be replaced by an HTTP call in ApiService
+  void cancelRideUser(String userId, String rideId, String reason) {
+    if (_socket == null || !_socket!.connected) return;
+    _socket!.emit('cancelRideUser',
+        {'userId': userId, 'rideId': rideId, 'reason': reason});
+  }
+
   void updateCaptainLocation(
       String captainId, double latitude, double longitude,
       {double? heading, double? speed}) {
-    // This is handled by the HTTP POST /api/captains/location now
-    // if (_socket == null || !_socket!.connected) return;
-    // _socket!.emit('updateCaptainLocation', { ... });
-    print(
-        "updateCaptainLocation via socket is deprecated. Use ApiService.updateCaptainLocation.");
-  }
-
-  // Example: requestRide should likely be an HTTP POST request via ApiService
-  void requestRide(Map<String, dynamic> rideData) {
-    // Consider moving this to an HTTP request via ApiService
     if (_socket == null || !_socket!.connected) return;
-    _socket!.emit('requestRide',
-        rideData); // This event might not be handled by the cleaned-up socket.js
-    print("Emitted requestRide (Note: Backend might not listen)");
+    _socket!.emit('updateLocation', {
+      'latitude': latitude,
+      'longitude': longitude,
+      if (heading != null) 'heading': heading,
+      if (speed != null) 'speed': speed
+    });
   }
 
-  // Example: acceptRide should be an HTTP POST request via ApiService
-  void acceptRide(String captainId, String rideId) {
-    // Consider moving this to an HTTP request via ApiService
+  void updateRideStatus(String rideId, String status,
+      {Map<String, dynamic>? location}) {
     if (_socket == null || !_socket!.connected) return;
-    _socket!.emit('acceptRide', {
-      'captainId': captainId,
-      'requestId': rideId
-    }); // This event might not be handled by the cleaned-up socket.js
-    print("Emitted acceptRide (Note: Backend might not listen)");
+    _socket!.emit('updateRideStatus', {
+      'rideId': rideId,
+      'status': status,
+      if (location != null) 'location': location
+    });
   }
 
-  // Example: cancelRideUser should be an HTTP POST request via ApiService
-  void cancelRideUser(String userId, String rideId, String reason) {
-    // Consider moving this to an HTTP request via ApiService
-    if (_socket == null || !_socket!.connected) return;
-    _socket!.emit(
-        'cancelRideUser', // This event might not be handled by the cleaned-up socket.js
-        {'userId': userId, 'rideId': rideId, 'reason': reason});
-    print("Emitted cancelRideUser (Note: Backend might not listen)");
-  }
-
-  // Example: cancelRideCaptain should be an HTTP POST request via ApiService
-  void cancelRideCaptain(String captainId, String rideId, String reason) {
-    // Consider moving this to an HTTP request via ApiService
-    if (_socket == null || !_socket!.connected) return;
-    _socket!.emit(
-        'cancelRide', // This event might not be handled by the cleaned-up socket.js
-        {'captainId': captainId, 'requestId': rideId, 'reason': reason});
-    print("Emitted cancelRideCaptain (Note: Backend might not listen)");
-  }
-
-  // Example: completeRide should be an HTTP POST request via ApiService
-  void completeRide(String captainId, String rideId) {
-    // Consider moving this to an HTTP request via ApiService
-    if (_socket == null || !_socket!.connected) return;
-    _socket! // This event might not be handled by the cleaned-up socket.js
-        .emit('completeRide', {'captainId': captainId, 'requestId': rideId});
-    print("Emitted completeRide (Note: Backend might not listen)");
-  }
-
-  void disconnect() {
-    print('Disconnecting socket...');
-    _socket?.disconnect();
-    _socket?.dispose(); // Clean up resources
-    _socket = null;
-  }
-
-  // Dispose stream controllers when service is no longer needed
   void dispose() {
+    disconnect();
     _connectionStatusController.close();
     _errorController.close();
     _rideStatusController.close();
@@ -297,11 +302,5 @@ class SocketService {
     _captainLocationUpdateController.close();
     _captainAvailabilityChangedController.close();
     _captainOfflineController.close();
-    // Close any new stream controllers you added
-    // Example:
-    // _driverArrivedController.close();
-    // _rideStartedController.close();
-    // _rideTakenController.close();
-    disconnect(); // Ensure socket is disconnected on dispose
   }
 }

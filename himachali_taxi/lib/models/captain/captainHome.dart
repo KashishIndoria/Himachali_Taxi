@@ -161,9 +161,9 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
     });
   }
 
-  void _setupSocketListeners() {
-    _socketProvider.socketService
-        .connectAndListen(widget.token, widget.userId, 'captain');
+  void _setupSocketListeners() async {
+    await _socketProvider.socketService
+        .connect(widget.token, widget.userId, 'captain');
     _setupRideListeners();
   }
 

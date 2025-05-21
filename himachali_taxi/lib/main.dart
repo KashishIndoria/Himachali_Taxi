@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:himachali_taxi/provider/captain_provider.dart';
 import 'package:himachali_taxi/provider/socket_provider.dart';
+import 'package:himachali_taxi/provider/video_call_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/cupertino.dart';
 import 'routers/approutes.dart';
@@ -20,6 +21,7 @@ Future<void> main() async {
             create: (_) => SocketProvider()), // Add SocketProvider here
         ChangeNotifierProvider(
             create: (_) => CaptainProvider()), // Add CaptainProvider
+        ChangeNotifierProvider(create: (_) => VideoCallProvider()),
       ],
       child: const MyApp(),
     ),

@@ -18,6 +18,7 @@ const captainRoutes = require('./routes/captainroutes');
 const locationRoutes = require('./routes/locationroutes');
 const profileRoutes = require('./routes/profileroutes');
 const ratingRoutes = require('./routes/ratingroutes');
+const videoCallRoutes = require('./routes/videoCall.routes');
 
 const app = express();
 const server = http.createServer(app);
@@ -134,6 +135,7 @@ app.use('/api/captain', captainRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/ratings', ratingRoutes);
+app.use('/api/video-calls', videoCallRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
