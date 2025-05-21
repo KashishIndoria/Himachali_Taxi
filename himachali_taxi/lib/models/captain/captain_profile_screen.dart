@@ -117,7 +117,7 @@ class _CaptainProfileScreenState extends State<CaptainProfileScreen>
       // 1. Changed "captain" to "captains"
       // 2. Removed the literal ":captainId/" part
       final response = await http.get(
-        Uri.parse('$_baseUrl/api/captains/profile/${widget.userId}'),
+        Uri.parse('$_baseUrl/api/captain/profile/${widget.userId}'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer ${widget.token}',

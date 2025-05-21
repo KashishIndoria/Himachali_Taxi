@@ -56,7 +56,7 @@ const initSocket = (server) => {
     });
 
     io.on('connection', (socket) => {
-        console.log(`${socket.userType} connected:`, socket.userId);
+        logger.info(`New socket connection: ${socket.id} (${socket.userType}:${socket.userId})`);
 
         // Initialize rate limit tracking for this socket
         rateLimits.set(socket.id, {
@@ -68,6 +68,13 @@ const initSocket = (server) => {
 
         // Join user-specific room
         socket.join(`${socket.userType}:${socket.userId}`);
+        logger.info(`${socket.userType}:${socket.userId} joined room: ${socket.userType}:${socket.userId}`);
+
+        // Join captains room if user is a captain
+        if (socket.userType === 'captain') {
+            socket.join('captains');
+            logger.info(`Captain ${socket.userId} joined captains room`);
+        }
 
         // Handle captain coming online
         if (socket.userType === 'captain') {
@@ -181,11 +188,83 @@ const initSocket = (server) => {
                     }
                 }
             });
+
+            // Handle captain's ride request response
+            socket.on('rideResponse', async (data) => {
+                logger.info(`Received ride response from captain ${socket.userId}:`, data);
+                try {
+                    const { rideId, accepted, reason } = data;
+                    const ride = await Ride.findById(rideId);
+
+                    if (!ride) {
+                        logger.error(`Ride ${rideId} not found for captain ${socket.userId}`);
+                        socket.emit('error', { message: 'Ride not found' });
+                        return;
+                    }
+
+                    if (ride.status !== 'requested') {
+                        logger.warn(`Ride ${rideId} is no longer available (status: ${ride.status})`);
+                        socket.emit('error', { message: 'Ride is no longer available' });
+                        return;
+                    }
+
+                    if (accepted) {
+                        // Update ride status
+                        ride.status = 'accepted';
+                        ride.captainId = socket.userId;
+                        await ride.save();
+
+                        // Update captain status
+                        const captain = await Captain.findById(socket.userId);
+                        captain.isAvailable = false;
+                        captain.currentRide = rideId;
+                        await captain.save();
+
+                        // Notify user
+                        io.to(`user:${ride.userId}`).emit('rideAccepted', {
+                            rideId: ride._id,
+                            captain: {
+                                id: captain._id,
+                                name: captain.name,
+                                phone: captain.phone,
+                                vehicleDetails: captain.vehicleDetails,
+                                location: captain.location,
+                                rating: captain.rating
+                            }
+                        });
+
+                        logger.info(`Captain ${socket.userId} accepted ride ${rideId}`);
+                    } else {
+                        // Notify user that ride was declined
+                        io.to(`user:${ride.userId}`).emit('rideDeclined', {
+                            rideId: ride._id,
+                            reason: reason || 'Declined by captain'
+                        });
+
+                        logger.info(`Captain ${socket.userId} declined ride ${rideId}`);
+                    }
+
+                    // Emit response to ride matching service
+                    io.emit(`captain:${socket.userId}:rideResponse`, {
+                        rideId,
+                        accepted,
+                        reason
+                    });
+
+                } catch (error) {
+                    logger.error(`Error handling ride response from captain ${socket.userId}:`, error);
+                    socket.emit('error', { 
+                        message: 'Failed to process ride response',
+                        details: error.message 
+                    });
+                }
+            });
         }
 
         // Handle ride requests from users
         if (socket.userType === 'user') {
             socket.on('requestRide', async (data) => {
+                logger.info(`Received ride request from user ${socket.userId}:`, data);
                 try {
                     const { pickupLocation, dropLocation } = data;
                     
@@ -208,9 +287,11 @@ const initSocket = (server) => {
 
                     await ride.calculateFare();
                     await ride.save();
+                    logger.info(`Created new ride request: ${ride._id}`);
 
                     // Start matching process
-                    rideMatchingService.startRideMatching(ride);
+                    const matchingResult = await rideMatchingService.startRideMatching(ride);
+                    logger.info(`Ride matching result for ${ride._id}:`, matchingResult);
 
                     socket.emit('rideStatus', {
                         status: 'requested',
@@ -218,7 +299,11 @@ const initSocket = (server) => {
                         message: 'Looking for nearby captains'
                     });
                 } catch (error) {
-                    socket.emit('error', { message: 'Failed to request ride' });
+                    logger.error(`Error handling ride request from user ${socket.userId}:`, error);
+                    socket.emit('error', { 
+                        message: 'Failed to request ride',
+                        details: error.message 
+                    });
                 }
             });
         }

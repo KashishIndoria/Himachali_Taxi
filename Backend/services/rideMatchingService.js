@@ -1,12 +1,14 @@
 const Captain = require('../models/captain/captain');
 const Ride = require('../models/rides/rides');
 const { getIO } = require('../config/socket');
+const logger = require('../utils/logger');
 
 class RideMatchingService {
     constructor() {
         this.SEARCH_RADIUS = 5000; // 5km in meters
         this.MAX_SEARCH_TIME = 180000; // 3 minutes in milliseconds
         this.MIN_CAPTAIN_RATING = 4.0;
+        this.activeMatches = new Map();
     }
 
     async findNearbyCaptains(latitude, longitude, radius = this.SEARCH_RADIUS) {
@@ -26,85 +28,102 @@ class RideMatchingService {
                 rating: { $gte: this.MIN_CAPTAIN_RATING }
             }).select('_id name phone vehicleDetails location rating currentRide');
 
+            logger.info(`Found ${captains.length} nearby available captains`);
             return captains;
         } catch (error) {
-            console.error('Error finding nearby captains:', error);
+            logger.error('Error finding nearby captains:', error);
             throw error;
         }
     }
 
     async startRideMatching(ride) {
-        const io = getIO();
-        let searchRadius = this.SEARCH_RADIUS;
-        let startTime = Date.now();
-        let matchFound = false;
+        try {
+            logger.info(`Starting ride matching for ride ${ride._id}`);
+            
+            // Find nearby available captains
+            const captains = await this.findNearbyCaptains(ride.pickupLocation.coordinates[1], ride.pickupLocation.coordinates[0]);
+            logger.info(`Found ${captains.length} nearby captains for ride ${ride._id}`);
 
-        const searchInterval = setInterval(async () => {
-            try {
-                if (Date.now() - startTime > this.MAX_SEARCH_TIME) {
-                    clearInterval(searchInterval);
-                    await this.handleNoMatchFound(ride);
-                    return;
-                }
-
-                const nearbyCaptains = await this.findNearbyCaptains(
-                    ride.pickupLocation.coordinates[1],
-                    ride.pickupLocation.coordinates[0],
-                    searchRadius
-                );
-
-                if (nearbyCaptains.length > 0) {
-                    matchFound = true;
-                    clearInterval(searchInterval);
-                    await this.notifyCaptains(nearbyCaptains, ride);
-                } else {
-                    // Increase search radius by 1km each iteration
-                    searchRadius += 1000;
-                }
-            } catch (error) {
-                console.error('Error in ride matching:', error);
-                clearInterval(searchInterval);
-                await this.handleNoMatchFound(ride);
+            if (captains.length === 0) {
+                logger.warn(`No nearby captains found for ride ${ride._id}`);
+                return { success: false, message: 'No nearby captains available' };
             }
-        }, 10000); // Check every 10 seconds
+
+            // Notify captains sequentially
+            const result = await this.notifyCaptainsSequentially(ride, captains);
+            
+            if (result) {
+                logger.info(`Ride ${ride._id} matched with captain ${result._id}`);
+                return { success: true, captain: result };
+            } else {
+                logger.warn(`No captain accepted ride ${ride._id}`);
+                return { success: false, message: 'No captain accepted the ride' };
+            }
+        } catch (error) {
+            logger.error(`Error in ride matching for ride ${ride._id}:`, error);
+            throw error;
+        }
     }
 
-    async notifyCaptains(captains, ride) {
-        const io = getIO();
-        const rideDetails = {
-            rideId: ride._id,
-            pickupLocation: ride.pickupLocation,
-            dropLocation: ride.dropLocation,
-            fare: ride.fare,
-            distance: ride.distance,
-            estimatedTime: ride.estimatedTime
-        };
-
-        // Update ride status to searching
-        await Ride.findByIdAndUpdate(ride._id, { status: 'searching' });
-
-        // Notify user that we're finding a captain
-        io.to(`user:${ride.userId}`).emit('rideStatus', {
-            status: 'searching',
-            message: 'Looking for nearby captains'
-        });
-
-        // Notify each captain in sequence with a delay
+    async notifyCaptainsSequentially(ride, captains) {
         for (const captain of captains) {
-            io.to(`captain:${captain._id}`).emit('newRideRequest', {
-                ...rideDetails,
-                expiresIn: 30 // seconds to respond
-            });
+            try {
+                logger.info(`Notifying captain ${captain._id} about ride ${ride._id}`);
+                
+                // Emit notification to captain through socket
+                getIO().to(`captain:${captain._id}`).emit('newRideRequest', {
+                    rideId: ride._id,
+                    pickup: ride.pickupLocation,
+                    dropoff: ride.dropLocation,
+                    fare: ride.fare,
+                    distance: ride.distance,
+                    estimatedTime: ride.estimatedTime,
+                    expiresIn: 30 // seconds to respond
+                });
 
-            // Wait for 30 seconds before trying next captain
-            await new Promise(resolve => setTimeout(resolve, 30000));
-
-            // Check if ride was accepted
-            const updatedRide = await Ride.findById(ride._id);
-            if (updatedRide.status === 'accepted') {
-                break;
+                // Wait for captain response (30 seconds timeout)
+                const accepted = await this.waitForCaptainResponse(captain._id, ride._id);
+                if (accepted) {
+                    logger.info(`Captain ${captain._id} accepted ride ${ride._id}`);
+                    return captain;
+                }
+            } catch (error) {
+                logger.error(`Error notifying captain ${captain._id}:`, error);
+                continue;
             }
         }
+        return null;
+    }
+
+    async waitForCaptainResponse(captainId, rideId) {
+        return new Promise((resolve) => {
+            const timeout = setTimeout(() => {
+                logger.info(`Timeout waiting for captain ${captainId} response for ride ${rideId}`);
+                resolve(false);
+            }, 30000);
+
+            const handler = async (data) => {
+                if (data.rideId === rideId) {
+                    clearTimeout(timeout);
+                    getIO().off(`captain:${captainId}:rideResponse`, handler);
+                    
+                    if (data.accepted) {
+                        try {
+                            await this.acceptRide(rideId, captainId);
+                            resolve(true);
+                        } catch (error) {
+                            logger.error(`Error accepting ride ${rideId} by captain ${captainId}:`, error);
+                            resolve(false);
+                        }
+                    } else {
+                        logger.info(`Captain ${captainId} declined ride ${rideId}`);
+                        resolve(false);
+                    }
+                }
+            };
+
+            getIO().on(`captain:${captainId}:rideResponse`, handler);
+        });
     }
 
     async handleNoMatchFound(ride) {
@@ -160,7 +179,7 @@ class RideMatchingService {
 
             return ride;
         } catch (error) {
-            console.error('Error accepting ride:', error);
+            logger.error('Error accepting ride:', error);
             throw error;
         }
     }
