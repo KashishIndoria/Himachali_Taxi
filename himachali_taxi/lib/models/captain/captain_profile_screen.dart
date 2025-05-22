@@ -101,10 +101,19 @@ class _CaptainProfileScreenState extends State<CaptainProfileScreen>
   // Helper to get Base URL from .env
   String _getBaseUrl() {
     final baseUrl = dotenv.env['BACKEND_URL'];
+    // Log the baseUrl retrieved from .env
+    print('CaptainProfileScreen: BACKEND_URL from .env for HTTP: $baseUrl');
     if (baseUrl == null || baseUrl.isEmpty) {
-      print("ERROR: BASE_URL not found in .env file.");
+      print("ERROR: CaptainProfileScreen: BASE_URL not found in .env file.");
       throw Exception("BASE_URL not configured in .env file.");
     }
+    // Defensive check for HTTP base URL as well
+    if (baseUrl.contains(':0')) {
+      print(
+          'CaptainProfileScreen: WARNING - BACKEND_URL for HTTP contained ":0". Attempting to strip it. Original: $baseUrl');
+      return baseUrl.replaceAll(':0', '');
+    }
+    print('CaptainProfileScreen: Using _baseUrl for HTTP: $baseUrl');
     return baseUrl;
   }
 
@@ -113,11 +122,10 @@ class _CaptainProfileScreenState extends State<CaptainProfileScreen>
     setState(() => _isLoading = true);
 
     try {
-      // Corrected URL: Removed the literal ":captainId/" part
       final response = await http.get(
         Uri.parse('$_baseUrl/api/captain/profile/${widget.userId}'),
-        headers: {
-          'Content-Type': 'application/json',
+        headers: <String, String>{
+          'Content-Type': 'application/json; charset=UTF-8',
           'Authorization': 'Bearer ${widget.token}',
         },
       );
@@ -241,10 +249,10 @@ class _CaptainProfileScreenState extends State<CaptainProfileScreen>
       }
 
       final response = await http.put(
-        Uri.parse('$_baseUrl/api/captain/profile'), // Use _baseUrl
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $captainToken', // Use fetched token
+        Uri.parse('$_baseUrl/api/captain/profile'),
+        headers: <String, String>{
+          'Content-Type': 'application/json; charset=UTF-8',
+          'Authorization': 'Bearer $captainToken',
         },
         body: jsonEncode(updateData),
       );
@@ -322,7 +330,8 @@ class _CaptainProfileScreenState extends State<CaptainProfileScreen>
 
       // Update profile in backend
       final response = await http.put(
-        Uri.parse('$_baseUrl/api/captain/profile/image'),
+        Uri.parse(
+            '$_baseUrl/api/captain/update-profile-image'), // Changed back to /api/captain
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer ${widget.token}',

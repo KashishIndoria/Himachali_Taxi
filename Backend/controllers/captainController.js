@@ -1,7 +1,7 @@
 const Captain = require('../models/captain/captain');
 const Ride = require('../models/ride/ride');
 const asyncHandler = require('express-async-handler');
-const { io } = require('../config/socket');
+const { getIO } = require('../config/socket'); // Import getIO
 
 // @desc    Get captain profile
 // @route   GET /api/captains/profile/:captainId
@@ -73,6 +73,7 @@ const updateCaptainProfile = asyncHandler(async (req, res) => {
 
   const updatedCaptain = await captain.save();
   
+  const io = getIO(); // Get io instance
   // Emit profile update event
   io.emit('captainProfileUpdated', {
     captainId: updatedCaptain._id,
@@ -124,6 +125,7 @@ const updateProfileImage = asyncHandler(async (req, res) => {
   captain.profileImage = profileImageUrl;
   const updatedCaptain = await captain.save();
 
+  const io = getIO(); // Get io instance
   // Emit profile image update event
   io.emit('captainProfileImageUpdated', {
     captainId: updatedCaptain._id,
@@ -183,6 +185,7 @@ const toggleAvailability = asyncHandler(async (req, res) => {
   captain.isAvailable = isAvailable;
   const updatedCaptain = await captain.save();
 
+  const io = getIO(); // Get io instance
   // Emit availability update event
   io.emit('captainAvailabilityUpdated', {
     captainId: updatedCaptain._id,
@@ -244,6 +247,7 @@ const updateLocation = asyncHandler(async (req, res) => {
 
   const updatedCaptain = await captain.save();
 
+  const io = getIO(); // Get io instance
   // Emit location update event
   io.emit('captainLocationUpdated', {
     captainId: updatedCaptain._id,
@@ -429,6 +433,7 @@ const acceptRideRequest = asyncHandler(async (req, res) => {
   captain.isAvailable = false;
   await captain.save();
 
+  const io = getIO(); // Get io instance
   // Emit ride accepted event
   io.emit('rideAccepted', {
     rideId: ride._id,
@@ -470,6 +475,7 @@ const declineRideRequest = asyncHandler(async (req, res) => {
   ride.declineReason = reason || 'Declined by captain';
   await ride.save();
 
+  const io = getIO(); // Get io instance
   // Emit ride declined event
   io.emit('rideDeclined', {
     rideId: ride._id,
@@ -523,6 +529,7 @@ const completeRide = asyncHandler(async (req, res) => {
   captain.isAvailable = true;
   await captain.save();
 
+  const io = getIO(); // Get io instance
   // Emit ride completed event
   io.emit('rideCompleted', {
     rideId: ride._id,
@@ -574,6 +581,7 @@ const cancelRideByDriver = asyncHandler(async (req, res) => {
   captain.isAvailable = true;
   await captain.save();
 
+  const io = getIO(); // Get io instance
   // Emit ride cancelled event
   io.emit('rideCancelled', {
     rideId: ride._id,
@@ -620,6 +628,7 @@ const markAsArrived = asyncHandler(async (req, res) => {
   ride.arrivedAt = new Date();
   await ride.save();
 
+  const io = getIO(); // Get io instance
   // Emit arrived event
   io.emit('captainArrived', {
     rideId: ride._id,
@@ -665,6 +674,7 @@ const startRide = asyncHandler(async (req, res) => {
   ride.startedAt = new Date();
   await ride.save();
 
+  const io = getIO(); // Get io instance
   // Emit ride started event
   io.emit('rideStarted', {
     rideId: ride._id,

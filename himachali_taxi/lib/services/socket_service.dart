@@ -6,8 +6,29 @@ import 'package:himachali_taxi/utils/sf_manager.dart';
 
 class SocketService {
   IO.Socket? _socket;
-  final String _backendUrl = dotenv.env['BACKEND_URL'] ??
-      'http://localhost:3000'; // Replace with your actual backend URL or load from .env
+  // final String _backendUrl = dotenv.env['BACKEND_URL'] ??
+  //     'http://localhost:3000'; // Replace with your actual backend URL or load from .env
+
+  // Explicitly log the URL from dotenv
+  final String _backendUrl = _getSocketBackendUrl();
+
+  static String _getSocketBackendUrl() {
+    final url = dotenv.env['BACKEND_URL'];
+    print('SocketService: Initial BACKEND_URL from .env: $url');
+    if (url == null || url.isEmpty) {
+      print(
+          'SocketService: BACKEND_URL from .env is null or empty, defaulting to http://localhost:3000');
+      return 'http://localhost:3000';
+    }
+    // Defensive check: remove :0 if present, though this is a workaround
+    if (url.contains(':0')) {
+      print(
+          'SocketService: WARNING - BACKEND_URL from .env contained ":0". Attempting to strip it. Original: $url');
+      return url.replaceAll(':0', '');
+    }
+    print('SocketService: Using BACKEND_URL for socket: $url');
+    return url;
+  }
 
   // Stream controllers to broadcast received events
   final StreamController<dynamic> _connectionStatusController =
@@ -82,11 +103,16 @@ class SocketService {
 
   Future<void> connect(String token, String userId, String userType) async {
     if (_socket != null && _socket!.connected) {
+      print('SocketService: Already connected.'); // Added log
       return;
     }
 
     _isManuallyDisconnected = false;
     _reconnectAttempts = 0;
+
+    // Log the URL just before attempting to connect
+    print(
+        'SocketService: Attempting to connect to socket at URL: $_backendUrl');
 
     try {
       _socket = IO.io(
