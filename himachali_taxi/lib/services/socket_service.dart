@@ -90,7 +90,7 @@ class SocketService {
 
     try {
       _socket = IO.io(
-        'http://192.168.177.195:3000', // Replace with your server URL
+        _backendUrl,
         IO.OptionBuilder()
             .setTransports(['websocket'])
             .setExtraHeaders({'Authorization': 'Bearer $token'})

@@ -19,6 +19,8 @@ const locationRoutes = require('./routes/locationroutes');
 const profileRoutes = require('./routes/profileroutes');
 const ratingRoutes = require('./routes/ratingroutes');
 const videoCallRoutes = require('./routes/videoCall.routes');
+const bookingRoutes = require('./routes/booking.routes.js'); 
+const { type } = require('os');
 
 const app = express();
 const server = http.createServer(app);
@@ -113,6 +115,51 @@ io.on('connection', (socket) => {
         }
     });
 
+    socket.on('ride_request', async (data) =>{
+        console.log('Ride request received:', data);
+
+        try{
+            if(!socket.userId){
+                socket.emit('error', { message: 'User not authenticated' });
+                return;
+            }
+
+        const {
+            pickupLocation,
+            dropoffLocation,
+            estimatedFare,
+            paymentMethod,
+            status,
+        } = data;
+
+        const newBooking = new Booking({
+            userId: socket.userId,
+            pickupLocation :{
+                type: 'Point',
+                coordinates: [pickupLocation.longitude, pickupLocation.latitude],
+                address: pickupLocation.address
+            },
+            dropoffLocation: {
+                type: 'Point',
+                coordinates: [dropoffLocation.longitude, dropoffLocation.latitude],
+                address: dropoffLocation.address
+            },
+            estimatedFare: estimatedFare,
+            paymentMethod: paymentMethod || 'CASH',
+            status: status || 'PENDING',
+        });
+
+        await newBooking.save();
+        console.log('Booking created:', newBooking);
+
+        io.to('captains').emit('new_ride_available',newBooking);
+        socket.emit('ride_request_successfully', newBooking);
+    }catch (error) {
+        console.error('Error handling ride request:', error);
+        socket.emit('error', { message: error.message || 'Error processing ride request' });
+    }
+});
+
     socket.on('disconnect', async () => {
         if (socket.userId) {
             try {
@@ -136,6 +183,7 @@ app.use('/api/locations', locationRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/ratings', ratingRoutes);
 app.use('/api/video-calls', videoCallRoutes);
+app.use('/api/bookings', bookingRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

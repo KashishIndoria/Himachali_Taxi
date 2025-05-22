@@ -31,7 +31,7 @@ class CaptainProfileScreen extends StatefulWidget {
 }
 
 class _CaptainProfileScreenState extends State<CaptainProfileScreen>
-    with TickerProviderStateMixin {
+    with SingleTickerProviderStateMixin {
   // Form Controllers
   final TextEditingController _firstNameController = TextEditingController();
   final TextEditingController _lastNameController = TextEditingController();
@@ -113,9 +113,7 @@ class _CaptainProfileScreenState extends State<CaptainProfileScreen>
     setState(() => _isLoading = true);
 
     try {
-      // Corrected URL:
-      // 1. Changed "captain" to "captains"
-      // 2. Removed the literal ":captainId/" part
+      // Corrected URL: Removed the literal ":captainId/" part
       final response = await http.get(
         Uri.parse('$_baseUrl/api/captain/profile/${widget.userId}'),
         headers: {
@@ -128,7 +126,6 @@ class _CaptainProfileScreenState extends State<CaptainProfileScreen>
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body)['data'];
-        print('Captain data: $data');
 
         setState(() {
           // Handle profile image correctly

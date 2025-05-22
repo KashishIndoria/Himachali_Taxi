@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:provider/provider.dart';
 import 'package:himachali_taxi/provider/booking_provider.dart';
-import 'package:himachali_taxi/models/booking_model.dart';
 import 'package:himachali_taxi/widgets/loading_indicator.dart';
 import 'package:himachali_taxi/widgets/error_dialog.dart';
+import 'package:geolocator/geolocator.dart';
 
 class BookingScreen extends StatefulWidget {
   const BookingScreen({Key? key}) : super(key: key);
@@ -30,19 +30,64 @@ class _BookingScreenState extends State<BookingScreen> {
   }
 
   Future<void> _calculateFare() async {
-    if (_pickupLocation == null || _dropoffLocation == null) return;
+    if (_pickupLocation == null || _dropoffLocation == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content:
+                  Text('Please select pickup and dropoff locations first.')),
+        );
+      }
+      return;
+    }
 
     setState(() {
       _isCalculatingFare = true;
     });
 
-    // TODO: Implement fare calculation logic
-    // This should call your backend API to calculate the fare
-    await Future.delayed(const Duration(seconds: 1)); // Simulated API call
-    setState(() {
-      _estimatedFare = 150.0; // Example fare
-      _isCalculatingFare = false;
-    });
+    try {
+      // Calculate distance in meters
+      double distanceInMeters = Geolocator.distanceBetween(
+        _pickupLocation!.latitude,
+        _pickupLocation!.longitude,
+        _dropoffLocation!.latitude,
+        _dropoffLocation!.longitude,
+      );
+
+      // Convert distance to kilometers
+      double distanceInKm = distanceInMeters / 1000;
+
+      // Himachal Pradesh fare logic
+      double baseFare = 100.0;
+      double ratePerKm = 10.0;
+      double calculatedFare = baseFare + (distanceInKm * ratePerKm);
+
+      // Ensure fare is not negative and has a minimum if needed (e.g., baseFare)
+      if (calculatedFare < baseFare && distanceInKm > 0) {
+        // This case might occur if distance is very small, ensure it's at least base fare or slightly more.
+        // For simplicity, we'll stick to the direct formula. If distance is 0, fare is baseFare.
+        calculatedFare = baseFare + (distanceInKm * ratePerKm);
+      } else if (distanceInKm == 0) {
+        calculatedFare = baseFare; // Or some other logic for 0 distance
+      }
+
+      // Round to 2 decimal places or an integer
+      _estimatedFare = double.parse(calculatedFare.toStringAsFixed(2));
+    } catch (e) {
+      print("Error calculating fare: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error calculating fare: ${e.toString()}')),
+        );
+      }
+      _estimatedFare = null; // Reset fare on error
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCalculatingFare = false;
+        });
+      }
+    }
   }
 
   Future<void> _bookRide() async {
