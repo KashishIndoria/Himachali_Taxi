@@ -162,31 +162,97 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
   }
 
   void _setupSocketListeners() async {
-    await _socketProvider.socketService
-        .connect(widget.token, widget.userId, 'captain');
-    _setupRideListeners();
+    try {
+      // Connect to socket
+      await _socketProvider.socketService
+          .connect(widget.token, widget.userId, 'captain');
+      print('Socket connected successfully');
+
+      // Set up ride request listener
+      _newRideRequestSubscription?.cancel();
+      _newRideRequestSubscription =
+          _socketProvider.socketService.newRideRequests.listen((data) {
+        print('Received new ride request: $data');
+        if (!mounted) return;
+
+        // Show ride request dialog
+        _showRideRequestDialog(data);
+      }, onError: (error) {
+        print('Error in ride request listener: $error');
+        _showErrorSnackBar('Error receiving ride request: $error');
+      });
+
+      // Set up ride cancelled listener
+      _rideCancelledSubscription?.cancel();
+      _rideCancelledSubscription = _socketProvider
+          .socketService.rideCancelledUpdates
+          .listen(_handleRideCancelled, onError: (error) {
+        print('Error in ride cancellation listener: $error');
+        _showErrorSnackBar('Error in ride cancellation: $error');
+      });
+
+      // Set up ride completed listener
+      _paymentCompletedSubscription?.cancel();
+      _paymentCompletedSubscription = _socketProvider
+          .socketService.rideCompletedUpdates
+          .listen(_handlePaymentCompleted, onError: (error) {
+        print('Error in payment completion listener: $error');
+        _showErrorSnackBar('Error in payment completion: $error');
+      });
+
+      // Set up error listener
+      _socketProvider.socketService.errorEvents.listen((error) {
+        print('Socket error: $error');
+        _showErrorSnackBar('Connection error: ${error['message']}');
+      });
+
+      // Set up connection status listener
+      _socketProvider.socketService.connectionStatus.listen((status) {
+        print('Connection status: $status');
+        if (status['connected'] == false) {
+          _showErrorSnackBar('Connection lost. Attempting to reconnect...');
+        }
+      });
+    } catch (error) {
+      print('Error setting up socket listeners: $error');
+      _showErrorSnackBar('Failed to connect to server: $error');
+    }
   }
 
-  void _setupRideListeners() {
-    _rideCancelledSubscription?.cancel();
-    _rideCancelledSubscription = _socketProvider
-        .socketService.rideCancelledUpdates
-        .listen(_handleRideCancelled, onError: (e) {
-      _showErrorSnackBar('Error in ride cancellation listener: $e');
-    });
-
-    _paymentCompletedSubscription?.cancel();
-    _paymentCompletedSubscription = _socketProvider
-        .socketService.rideCompletedUpdates
-        .listen(_handlePaymentCompleted, onError: (e) {
-      _showErrorSnackBar('Error in payment completion listener: $e');
-    });
-
-    _newRideRequestSubscription?.cancel();
-    _newRideRequestSubscription = _socketProvider.socketService.newRideRequests
-        .listen(_handleNewRideRequest, onError: (e) {
-      _showErrorSnackBar('Error in new ride request listener: $e');
-    });
+  void _showRideRequestDialog(Map<String, dynamic> rideData) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('New Ride Request'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Pickup: ${rideData['pickup']['address']}'),
+            Text('Dropoff: ${rideData['dropoff']['address']}'),
+            Text('Distance: ${rideData['distance']} km'),
+            Text('Estimated Fare: ₹${rideData['fare']}'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _declineRideRequest(rideData['rideId']);
+            },
+            child: const Text('Decline'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _acceptRideRequest(rideData['rideId']);
+            },
+            child: const Text('Accept'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _handleRideCancelled(dynamic data) async {
@@ -220,11 +286,6 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
         backgroundColor: Colors.green,
       ),
     );
-  }
-
-  void _handleNewRideRequest(dynamic data) async {
-    if (!mounted) return;
-    await _refreshRides();
   }
 
   Future<void> _fetchInitialData() async {
@@ -405,71 +466,48 @@ class _CaptainHomeScreenState extends State<CaptainHomeScreen> {
     );
   }
 
-  void _acceptRideRequest(String rideId) async {
-    if (!mounted) return;
-    final provider = Provider.of<CaptainProvider>(context, listen: false);
-
-    if (!mounted) return;
-    if (Navigator.canPop(context)) {
-      Navigator.of(context).pop();
-    }
-
-    final success = await provider.acceptRide(rideId);
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(success
-            ? 'Ride Accepted!'
-            : 'Failed to accept ride: ${provider.errorMessage ?? 'Maybe already taken?'}'),
-        backgroundColor: success ? Colors.green : Colors.red,
-      ),
-    );
-    if (success) {
-    } else {
-      if (!mounted) return;
-      _refreshRides();
+  Future<void> _acceptRideRequest(String rideId) async {
+    try {
+      print('Accepting ride request: $rideId');
+      final success = await _socketProvider.socketService.acceptRide(rideId);
+      if (success) {
+        _showSuccessSnackBar('Ride accepted successfully');
+        // Update UI state
+        setState(() {
+          isAvailable = false;
+        });
+      } else {
+        _showErrorSnackBar('Failed to accept ride');
+      }
+    } catch (error) {
+      print('Error accepting ride: $error');
+      _showErrorSnackBar('Error accepting ride: $error');
     }
   }
 
-  void _declineRideRequest(String rideId) async {
-    if (!mounted) return;
-    if (Navigator.canPop(context)) {
-      Navigator.of(context).pop();
-    }
-
+  Future<void> _declineRideRequest(String rideId) async {
     try {
-      final success = await _captainService.declineRide(rideId);
-
-      if (!mounted) return;
-
+      print('Declining ride request: $rideId');
+      final success = await _socketProvider.socketService.declineRide(rideId);
       if (success) {
-        if (!mounted) return;
-        Provider.of<CaptainProvider>(context, listen: false)
-            .removeRideById(rideId);
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ride Declined')),
-        );
+        _showSuccessSnackBar('Ride declined');
       } else {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text('Failed to decline ride'),
-              backgroundColor: Colors.red),
-        );
-        if (!mounted) return;
-        _refreshRides();
+        _showErrorSnackBar('Failed to decline ride');
       }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text('Error declining ride: $e'),
-              backgroundColor: Colors.red),
-        );
-      }
+    } catch (error) {
+      print('Error declining ride: $error');
+      _showErrorSnackBar('Error declining ride: $error');
     }
+  }
+
+  void _showSuccessSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.green,
+      ),
+    );
   }
 
   Future<void> _refreshRides() async {

@@ -55,6 +55,15 @@ class SocketService {
   // Stream<dynamic> get rideStartedUpdates => _rideStartedController.stream;
   // Stream<dynamic> get rideTakenUpdates => _rideTakenController.stream;
 
+  // Stream getters
+  Stream<Map<String, dynamic>> get rideStatusStream =>
+      _rideStatusController.stream.map((data) => data as Map<String, dynamic>);
+  Stream<Map<String, dynamic>> get captainLocationStream =>
+      _captainLocationUpdateController.stream
+          .map((data) => data as Map<String, dynamic>);
+  Stream<Map<String, dynamic>> get errorStream =>
+      _errorController.stream.map((data) => data as Map<String, dynamic>);
+
   bool get isConnected => _socket?.connected ?? false;
 
   // Singleton pattern
@@ -288,6 +297,41 @@ class SocketService {
       'status': status,
       if (location != null) 'location': location
     });
+  }
+
+  // Add ride acceptance and decline methods
+  Future<bool> acceptRide(String rideId) async {
+    if (_socket == null || !_socket!.connected) {
+      _errorController.add({'message': 'Socket not connected'});
+      return false;
+    }
+
+    try {
+      _socket!.emit('rideResponse', {'rideId': rideId, 'accepted': true});
+      return true;
+    } catch (e) {
+      _errorController.add({'message': 'Error accepting ride: $e'});
+      return false;
+    }
+  }
+
+  Future<bool> declineRide(String rideId) async {
+    if (_socket == null || !_socket!.connected) {
+      _errorController.add({'message': 'Socket not connected'});
+      return false;
+    }
+
+    try {
+      _socket!.emit('rideResponse', {
+        'rideId': rideId,
+        'accepted': false,
+        'reason': 'Declined by captain'
+      });
+      return true;
+    } catch (e) {
+      _errorController.add({'message': 'Error declining ride: $e'});
+      return false;
+    }
   }
 
   void dispose() {

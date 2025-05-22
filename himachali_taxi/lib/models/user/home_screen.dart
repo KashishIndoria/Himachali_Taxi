@@ -115,118 +115,173 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _setupSocketListeners() {
-    // Listen for captain location updates
-    _captainLocationSubscription =
-        _socketProvider.socketService.captainLocationUpdates.listen((data) {
-      final Map<String, dynamic>? dataMap = data as Map<String, dynamic>?;
-      if (dataMap != null &&
-          dataMap['captainId'] != null &&
-          dataMap['location'] != null) {
-        _updateCaptainMarker(dataMap);
-      }
-    });
-
     // Listen for ride acceptance
-    _rideAcceptedSubscription =
-        _socketProvider.socketService.rideAcceptedUpdates.listen((data) {
-      final Map<String, dynamic>? dataMap = data as Map<String, dynamic>?;
-      if (dataMap != null &&
-          dataMap['rideId'] != null &&
-          dataMap['captainId'] != null) {
-        print("Ride Accepted Data: $dataMap");
+    _socketProvider.socketService.rideStatusStream.listen((data) {
+      if (data['status'] == 'accepted') {
         setState(() {
           _rideState = RideState.accepted;
-          _activeRideDetails = dataMap;
+          _activeRideDetails = data;
           _assignedCaptainDetails = {
-            'id': dataMap['captainId'],
-            'name': dataMap['captainName'],
-            'phone': dataMap['captainPhone'],
-            'rating': dataMap['captainRating'],
-            'vehicle': dataMap['vehicleDetails'],
+            'id': data['captainId'],
+            'name': data['captainName'],
+            'phone': data['captainPhone'],
+            'rating': data['captainRating'],
+            'vehicle': data['vehicleDetails'],
           };
           _isLoading = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-                '${_assignedCaptainDetails?['name'] ?? 'Driver'} accepted your ride!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        _markers.removeWhere((m) =>
-            m.markerId.value == 'from' || m.markerId.value == 'destination');
-      }
-    });
-
-    // Listen for ride cancellation
-    _rideCancelledSubscription =
-        _socketProvider.socketService.rideCancelledUpdates.listen((data) {
-      final Map<String, dynamic>? dataMap = data as Map<String, dynamic>?;
-      if (dataMap != null && dataMap['rideId'] != null) {
-        if (_activeRideDetails != null &&
-            dataMap['rideId'] == _activeRideDetails!['rideId']) {
-          print("Ride Cancelled Data: $dataMap");
-          setState(() {
-            _rideState = RideState.cancelled;
-            _activeRideDetails = null;
-            _assignedCaptainDetails = null;
-            _isLoading = false;
-          });
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Ride cancelled: ${dataMap['reason'] ?? ''}'),
-              backgroundColor: Colors.orange,
-            ),
-          );
-          _markers.removeWhere((m) => m.markerId.value != 'current_location');
-        }
-      }
-    });
-  }
-
-  void _updateCaptainMarker(Map<String, dynamic> captainData) {
-    // This function now does nothing, preventing captain markers from being added/updated.
-    // print(
-    //     "Received captain update for ${captainData['captainId']}, but marker display is disabled.");
-
-    // --- Original code uncommented ---
-    final String captainId = captainData['captainId'];
-    final locationData = captainData['location'];
-    final List<dynamic>? coords = locationData['coordinates'];
-    final double? heading = locationData['heading']?.toDouble();
-
-    if (coords != null && coords.length == 2) {
-      final LatLng position = LatLng(coords[1], coords[0]);
-
-      bool shouldUpdateMarker =
-          (_rideState == RideState.accepted || _rideState == RideState.ongoing)
-              ? (_assignedCaptainDetails != null &&
-                  _assignedCaptainDetails!['id'] == captainId)
-              : _rideState == RideState.idle;
-
-      // The check for _captainIcon would now fail anyway, but explicitly removing logic
-      if (shouldUpdateMarker && _captainIcon != null) {
+        _showRideAcceptedDialog();
+      } else if (data['status'] == 'cancelled') {
         setState(() {
-          _markers.removeWhere((m) => m.markerId.value == 'captain_$captainId');
+          _rideState = RideState.cancelled;
+          _activeRideDetails = null;
+          _assignedCaptainDetails = null;
+          _isLoading = false;
+        });
+        _showRideCancelledDialog(data['reason'] ?? 'Ride was cancelled');
+      } else if (data['status'] == 'completed') {
+        setState(() {
+          _rideState = RideState.completed;
+        });
+        _showRideCompletedDialog();
+      }
+    });
+
+    // Listen for captain location updates
+    _socketProvider.socketService.captainLocationStream.listen((data) {
+      if (_assignedCaptainDetails != null &&
+          data['captainId'] == _assignedCaptainDetails!['id']) {
+        setState(() {
+          _currentLocation = data['location'];
+          _markers.removeWhere((m) => m.markerId.value == 'current_location');
           _markers.add(
             Marker(
-              markerId: MarkerId('captain_$captainId'),
-              position: position,
-              icon: _captainIcon!,
-              rotation: heading ?? 0.0,
-              anchor: const Offset(0.5, 0.5),
-              infoWindow: InfoWindow(
-                title: _assignedCaptainDetails != null &&
-                        _assignedCaptainDetails!['id'] == captainId
-                    ? _assignedCaptainDetails!['name'] ?? 'Your Driver'
-                    : 'Nearby Captain',
-              ),
+              markerId: const MarkerId('current_location'),
+              position: LatLng(
+                  data['location']['latitude'], data['location']['longitude']),
+              infoWindow: const InfoWindow(title: 'Your Location'),
+            ),
+          );
+          _mapController?.animateCamera(
+            CameraUpdate.newLatLng(
+              LatLng(
+                  data['location']['latitude'], data['location']['longitude']),
             ),
           );
         });
+        _updateRoute();
       }
+    });
+
+    // Listen for errors
+    _socketProvider.socketService.errorStream.listen((error) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error['message'] ?? 'An error occurred'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    });
+  }
+
+  void _showRideAcceptedDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Text('Ride Accepted!'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Your ride has been accepted by:'),
+            SizedBox(height: 8),
+            Text('Name: ${_assignedCaptainDetails!['name']}'),
+            Text('Phone: ${_assignedCaptainDetails!['phone']}'),
+            Text(
+                'Vehicle: ${_assignedCaptainDetails!['vehicle']['model']} - ${_assignedCaptainDetails!['vehicle']['plateNumber']}'),
+            Text('Rating: ${_assignedCaptainDetails!['rating']}'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _startTrackingRide();
+            },
+            child: Text('Start Ride'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showRideCancelledDialog(String reason) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Text('Ride Cancelled'),
+        content: Text(reason),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              setState(() {
+                _rideState = RideState.idle;
+                _activeRideDetails = null;
+                _assignedCaptainDetails = null;
+                _isLoading = false;
+                _markers
+                    .removeWhere((m) => m.markerId.value != 'current_location');
+              });
+            },
+            child: Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showRideCompletedDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Text('Ride Completed'),
+        content: Text('Thank you for using our service!'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              setState(() {
+                _rideState = RideState.idle;
+                _activeRideDetails = null;
+                _assignedCaptainDetails = null;
+                _isLoading = false;
+                _markers
+                    .removeWhere((m) => m.markerId.value != 'current_location');
+              });
+            },
+            child: Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _startTrackingRide() {
+    // Start tracking the ride and updating the route
+    _updateRoute();
+  }
+
+  void _updateRoute() {
+    if (_currentLocation != null &&
+        _fromLatLng != null &&
+        _destinationLatLng != null) {
+      // Update the route on the map
+      // Implementation depends on your map provider
     }
-    // --- End of original code ---
   }
 
   // --- START: Add load marker icons function ---

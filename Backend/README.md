@@ -2,7 +2,7 @@
 
 This is the backend server for the Himachali Taxi application. It handles user authentication, captain management, ride requests, location updates, and more.
 
-## Project Structure
+## 🏗 Project Structure
 
 ```
 Backend/
@@ -12,100 +12,157 @@ Backend/
 ├── models/         # Mongoose schemas and data models
 ├── routes/         # API route definitions
 ├── services/       # External service integrations (e.g., email)
-├── uploads/        # Directory for user uploads (e.g., profile images) - Should be in .gitignore if not versioned
+├── uploads/        # Directory for user uploads (e.g., profile images)
 ├── utils/          # Utility functions (OTP generation, email templates, logger)
 ├── .env.example    # Example environment variables file
-├── .gitignore      # Specifies intentionally untracked files that Git should ignore
+├── .gitignore      # Specifies intentionally untracked files
 ├── package.json    # Project metadata and dependencies
 ├── package-lock.json # Records exact versions of dependencies
 └── server.js       # Main application entry point
 ```
 
-## Prerequisites
+## 🚀 Technologies Used
 
-*   [Node.js](https://nodejs.org/) (LTS version recommended, e.g., v18.x or v20.x)
-*   [npm](https://www.npmjs.com/) (usually comes with Node.js)
-*   [MongoDB](https://www.mongodb.com/) (either a local instance or a cloud-hosted solution like MongoDB Atlas)
-*   A Git client
+- **Node.js** - Runtime environment
+- **Express.js** - Web framework
+- **MongoDB** - Database
+- **Socket.IO** - Real-time communication
+- **JWT** - Authentication
+- **Mongoose** - MongoDB object modeling
+- **Nodemailer** - Email service
+- **Multer** - File upload handling
 
-## Setup and Installation
+## 📋 Prerequisites
 
-1.  **Clone the repository (if you haven't already):**
-    ```bash
-    git clone https://github.com/KashishIndoria/Himachali_Taxi.git
-    cd Himachali_Taxi/Backend
-    ```
+- Node.js (LTS version recommended, e.g., v18.x or v20.x)
+- npm (usually comes with Node.js)
+- MongoDB (either a local instance or MongoDB Atlas)
+- Git client
 
-2.  **Install dependencies:**
-    ```bash
-    npm install
-    ```
+## ⚙️ Setup and Installation
 
-3.  **Set up environment variables:**
-    *   Create a `.env` file in the `Backend` root directory.
-    *   Copy the contents of `.env.example` (if you create one) or add the following variables, replacing the placeholder values with your actual configuration:
-        ```env
-        PORT=3000
-        MONGODB_URI=your_mongodb_connection_string
-        JWT_SECRET=your_very_strong_jwt_secret_key
-        EMAIL_HOST=your_email_host
-        EMAIL_PORT=your_email_port
-        EMAIL_USER=your_email_user
-        EMAIL_PASS=your_email_password
-        NODE_ENV=development
-        ```
-    *   **`MONGODB_URI`**: Your MongoDB connection string.
-    *   **`JWT_SECRET`**: A strong, random string for signing JSON Web Tokens.
-    *   **`EMAIL_*`**: Credentials for your email sending service (if applicable).
-    *   **`NODE_ENV`**: Set to `development` for local development, `production` for deployment.
+1. Clone the repository:
+```bash
+git clone https://github.com/KashishIndoria/Himachali_Taxi.git
+cd Himachali_Taxi/Backend
+```
 
-## Available Scripts
+2. Install dependencies:
+```bash
+npm install
+```
 
-In the `Backend` directory, you can run the following scripts:
+3. Set up environment variables:
+   - Create a `.env` file in the Backend root directory
+   - Add the following variables:
+     ```
+     PORT=3000
+     MONGODB_URI=your_mongodb_connection_string
+     JWT_SECRET=your_very_strong_jwt_secret_key
+     EMAIL_HOST=your_email_host
+     EMAIL_PORT=your_email_port
+     EMAIL_USER=your_email_user
+     EMAIL_PASS=your_email_password
+     NODE_ENV=development
+     ```
 
-*   **Start the server (development mode):**
-    ```bash
-    npm start
-    ```
-    This will typically start the server using `nodemon` if configured (for auto-restarts on file changes) or `node server.js`. Check your `package.json` for the exact command.
+## 🚀 Available Scripts
 
-*   **Start the server (production mode):**
-    (Assuming your `package.json` has a specific script or your `start` script handles `NODE_ENV=production` appropriately)
-    ```bash
-    npm start 
-    ```
-    or
-    ```bash
-    NODE_ENV=production npm start
-    ```
+- Start development server:
+```bash
+npm run dev
+```
 
-## API Endpoints
+- Start production server:
+```bash
+npm start
+```
 
-(Consider adding a brief overview of major API endpoints or linking to API documentation if you have it, e.g., using Postman or Swagger/OpenAPI).
+- Run tests:
+```bash
+npm test
+```
 
-Example:
-*   `POST /api/auth/user/signup` - User registration
-*   `POST /api/auth/user/login` - User login
-*   `POST /api/auth/captain/signup` - Captain registration
-*   `POST /api/auth/captain/login` - Captain login
-*   `GET /api/captains/profile/:captainId` - Get captain profile
-*   ... and so on.
+## 📡 API Endpoints
 
-## Deployment
+### Authentication
+- `POST /api/auth/user/signup` - User registration
+- `POST /api/auth/user/login` - User login
+- `POST /api/auth/captain/signup` - Captain registration
+- `POST /api/auth/captain/login` - Captain login
 
-This backend can be deployed to various platforms like:
-*   Render
-*   Heroku
-*   Azure App Service
-*   AWS Elastic Beanstalk
-*   Google App Engine
+### User Management
+- `GET /api/users/profile` - Get user profile
+- `PUT /api/users/profile` - Update user profile
+- `POST /api/users/upload` - Upload profile picture
 
-Ensure environment variables are set correctly on the deployment platform.
+### Captain Management
+- `GET /api/captains/profile/:captainId` - Get captain profile
+- `PUT /api/captains/profile` - Update captain profile
+- `GET /api/captains/nearby` - Get nearby captains
+- `PUT /api/captains/availability` - Update availability status
 
-## Contributing
+### Ride Management
+- `POST /api/rides/request` - Request a ride
+- `PUT /api/rides/:rideId/accept` - Accept ride request
+- `PUT /api/rides/:rideId/cancel` - Cancel ride
+- `PUT /api/rides/:rideId/complete` - Complete ride
+- `GET /api/rides/history` - Get ride history
 
-(Optional: Add guidelines if you plan to have others contribute to the project).
+### Real-time Updates
+- WebSocket events for:
+  - Location updates
+  - Ride status changes
+  - New ride requests
+  - Captain availability
 
----
+## 🔒 Security Features
 
-*This README is a template. Please update it with specific details relevant to your Himachali Taxi backend.*
+- JWT-based authentication
+- Password hashing using bcrypt
+- Rate limiting
+- Input validation
+- CORS configuration
+- Helmet security headers
+
+## 📦 Deployment
+
+The backend can be deployed to various platforms:
+
+- Render
+- Heroku
+- Azure App Service
+- AWS Elastic Beanstalk
+- Google App Engine
+
+### Deployment Checklist
+
+1. Set up environment variables
+2. Configure MongoDB connection
+3. Set up SSL/TLS certificates
+4. Configure CORS for production
+5. Set up logging and monitoring
+6. Configure backup strategy
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 💬 Support
+
+For support, email support@himachalitaxi.com or join our Slack channel.
+
+## 🔄 Updates
+
+- Real-time location tracking
+- Enhanced security features
+- Improved error handling
+- Better documentation
