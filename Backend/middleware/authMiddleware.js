@@ -1,12 +1,7 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/user/User');
 const Captain = require('../models/captain/captain');
-const logger = require('../utils/logger'); // Assuming logger is configured
-
-/**
- * Authentication middleware to verify JWT tokens
- * Works for both users and captains
- */
+const logger = require('../utils/logger'); // 
 module.exports = async function(req, res, next) {
   // Get token from header
   const token = req.header('Authorization')?.replace('Bearer ', '');
@@ -45,7 +40,7 @@ module.exports = async function(req, res, next) {
     // Fetch user/captain from DB based on role in token
     let userOrCaptain;
     if (decoded.role === 'captain') {
-      // Select only necessary fields, like _id, unless others are needed downstream
+
       userOrCaptain = await Captain.findById(decoded.id).select('_id');
     } else if (decoded.role === 'user') {
       // Select only necessary fields
@@ -70,14 +65,12 @@ module.exports = async function(req, res, next) {
       return res.status(401).json({ message: 'Invalid token - user/captain not found' });
     }
 
-    // Attach consistent user info object to request, as per the 'protect' example
     req.user = {
-      id: userOrCaptain._id.toString(), // Ensure it's a string ID
-      role: decoded.role // Get role from token payload
-      // Add other fields from userOrCaptain if needed downstream, e.g., name: userOrCaptain.name
+      id: userOrCaptain._id.toString(), 
+      role: decoded.role 
     };
 
-    // The original req.isCaptain is now implicitly handled by req.user.role === 'captain'
+
 
     next(); // Proceed to next middleware
   } catch (err) {

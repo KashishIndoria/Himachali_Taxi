@@ -1,6 +1,6 @@
 const Booking = require('../models/booking.model');
 const { calculateDistance } = require('../utils/location.utils');
-const { emitSocketEvent } = require('../services/socket.service');
+const { emitSocketEvent } = require('../config/socket'); // Corrected path
 
 // Constants for fare calculation
 const BASE_FARE = 50;
@@ -244,4 +244,4 @@ exports.calculateFare = async (req, res) => {
       error: error.message
     });
   }
-}; 
+};

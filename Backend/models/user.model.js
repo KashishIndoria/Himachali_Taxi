@@ -92,5 +92,5 @@ userSchema.methods.updateRating = function(newRating) {
     this.rating.average = (oldTotal + newRating) / this.rating.count;
 };
 
-const User = mongoose.model('User', userSchema);
-module.exports = User; 
+// Check if the model already exists before compiling it
+module.exports = mongoose.models.User || mongoose.model('User', userSchema);

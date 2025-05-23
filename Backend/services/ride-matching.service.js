@@ -1,4 +1,4 @@
-const User = require('../models/user.model');
+const User = require('../models/user/User'); // Corrected path
 const Ride = require('../models/ride.model');
 
 class RideMatchingService {
@@ -144,4 +144,4 @@ class RideMatchingService {
     }
 }
 
-module.exports = new RideMatchingService(); 
+module.exports = new RideMatchingService();

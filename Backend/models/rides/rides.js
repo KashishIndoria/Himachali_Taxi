@@ -199,4 +199,5 @@ RideSchema.methods.updateStatus = async function(newStatus, location = null) {
     return this;
 };
 
-module.exports = mongoose.model('Ride', RideSchema);
+// Check if the model already exists before compiling it
+module.exports = mongoose.models.Ride || mongoose.model('Ride', RideSchema);

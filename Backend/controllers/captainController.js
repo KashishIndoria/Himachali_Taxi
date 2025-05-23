@@ -1,10 +1,10 @@
 const Captain = require('../models/captain/captain');
-const Ride = require('../models/ride/ride');
+const Ride = require('../models/rides/rides');
 const asyncHandler = require('express-async-handler');
 const { getIO } = require('../config/socket'); // Import getIO
 
 // @desc    Get captain profile
-// @route   GET /api/captains/profile/:captainId
+// @route   GET /api/captain/profile/:captainId
 // @access  Private
 const getCaptainProfile = asyncHandler(async (req, res) => {
   const captain = await Captain.findById(req.params.captainId)
@@ -23,7 +23,7 @@ const getCaptainProfile = asyncHandler(async (req, res) => {
 });
 
 // @desc    Update captain profile
-// @route   PUT /api/captains/profile
+// @route   PUT /api/captain/profile
 // @access  Private
 const updateCaptainProfile = asyncHandler(async (req, res) => {
   const { firstName, lastName, phone, vehicleDetails, drivingLicense } = req.body;
@@ -87,7 +87,7 @@ const updateCaptainProfile = asyncHandler(async (req, res) => {
 });
 
 // @desc    Update profile image
-// @route   PUT /api/captains/update-profile-image
+// @route   PUT /api/captain/update-profile-image
 // @access  Private
 const updateProfileImage = asyncHandler(async (req, res) => {
   const { profileImageUrl } = req.body;
@@ -141,7 +141,7 @@ const updateProfileImage = asyncHandler(async (req, res) => {
 });
 
 // @desc    Get captain status
-// @route   GET /api/captains/status
+// @route   GET /api/captain/status
 // @access  Private
 const getCaptainStatus = asyncHandler(async (req, res) => {
   const captain = await Captain.findById(req.user._id)
@@ -160,7 +160,7 @@ const getCaptainStatus = asyncHandler(async (req, res) => {
 });
 
 // @desc    Toggle availability
-// @route   POST /api/captains/toggle-availability
+// @route   POST /api/captain/toggle-availability
 // @access  Private
 const toggleAvailability = asyncHandler(async (req, res) => {
   const { isAvailable } = req.body;
@@ -201,7 +201,7 @@ const toggleAvailability = asyncHandler(async (req, res) => {
 });
 
 // @desc    Update location
-// @route   POST /api/captains/update-location
+// @route   POST /api/captain/update-location
 // @access  Private
 const updateLocation = asyncHandler(async (req, res) => {
   const { latitude, longitude, heading, speed } = req.body;
@@ -267,7 +267,7 @@ const updateLocation = asyncHandler(async (req, res) => {
 });
 
 // @desc    Get ride history
-// @route   GET /api/captains/rides
+// @route   GET /api/captain/rides
 // @access  Private
 const getRideHistory = asyncHandler(async (req, res) => {
   const page = parseInt(req.query.page) || 1;
@@ -298,7 +298,7 @@ const getRideHistory = asyncHandler(async (req, res) => {
 });
 
 // @desc    Get earnings
-// @route   GET /api/captains/earnings
+// @route   GET /api/captain/earnings
 // @access  Private
 const getEarnings = asyncHandler(async (req, res) => {
   const { period = 'all' } = req.query;
@@ -356,8 +356,8 @@ const getEarnings = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Get available rides
-// @route   GET /api/captains/available-rides
+// @desc    Get available rides for a captain
+// @route   GET /api/captain/available-rides
 // @access  Private
 const getAvailableRides = asyncHandler(async (req, res) => {
   const captain = await Captain.findById(req.user._id);
@@ -391,8 +391,8 @@ const getAvailableRides = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Accept ride request
-// @route   POST /api/captains/accept-ride
+// @desc    Accept a ride request
+// @route   POST /api/captain/accept-ride
 // @access  Private
 const acceptRideRequest = asyncHandler(async (req, res) => {
   const { rideId } = req.body;
@@ -447,8 +447,8 @@ const acceptRideRequest = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Decline ride request
-// @route   POST /api/captains/decline-ride/:rideId
+// @desc    Decline a ride request
+// @route   POST /api/captain/decline-ride/:rideId
 // @access  Private
 const declineRideRequest = asyncHandler(async (req, res) => {
   const { reason } = req.body;
@@ -490,8 +490,100 @@ const declineRideRequest = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Complete ride
-// @route   POST /api/captains/complete-ride
+// @desc    Mark ride as arrived at pickup
+// @route   POST /api/captain/arrive
+// @access  Private
+const markAsArrived = asyncHandler(async (req, res) => {
+  const { rideId } = req.body;
+  const captain = await Captain.findById(req.user._id);
+
+  if (!captain) {
+    res.status(404);
+    throw new Error('Captain not found');
+  }
+
+  const ride = await Ride.findById(rideId);
+  if (!ride) {
+    res.status(404);
+    throw new Error('Ride not found');
+  }
+
+  if (ride.captain.toString() !== captain._id.toString()) {
+    res.status(403);
+    throw new Error('Not authorized to update this ride');
+  }
+
+  if (ride.status !== 'accepted') {
+    res.status(400);
+    throw new Error('Ride is not in accepted state');
+  }
+
+  ride.status = 'arrived';
+  ride.arrivedAt = new Date();
+  await ride.save();
+
+  const io = getIO(); // Get io instance
+  // Emit arrived event
+  io.emit('captainArrived', {
+    rideId: ride._id,
+    captainId: captain._id,
+    userId: ride.user
+  });
+
+  res.json({
+    success: true,
+    data: ride
+  });
+});
+
+// @desc    Start a ride
+// @route   POST /api/captain/start-ride
+// @access  Private
+const startRide = asyncHandler(async (req, res) => {
+  const { rideId } = req.body;
+  const captain = await Captain.findById(req.user._id);
+
+  if (!captain) {
+    res.status(404);
+    throw new Error('Captain not found');
+  }
+
+  const ride = await Ride.findById(rideId);
+  if (!ride) {
+    res.status(404);
+    throw new Error('Ride not found');
+  }
+
+  if (ride.captain.toString() !== captain._id.toString()) {
+    res.status(403);
+    throw new Error('Not authorized to update this ride');
+  }
+
+  if (ride.status !== 'arrived') {
+    res.status(400);
+    throw new Error('Ride is not in arrived state');
+  }
+
+  ride.status = 'in_progress';
+  ride.startedAt = new Date();
+  await ride.save();
+
+  const io = getIO(); // Get io instance
+  // Emit ride started event
+  io.emit('rideStarted', {
+    rideId: ride._id,
+    captainId: captain._id,
+    userId: ride.user
+  });
+
+  res.json({
+    success: true,
+    data: ride
+  });
+});
+
+// @desc    Complete a ride
+// @route   POST /api/captain/complete-ride
 // @access  Private
 const completeRide = asyncHandler(async (req, res) => {
   const { rideId, finalFare, distance, duration } = req.body;
@@ -544,8 +636,8 @@ const completeRide = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Cancel ride
-// @route   POST /api/captains/cancel-ride
+// @desc    Cancel a ride by driver
+// @route   POST /api/captain/cancel-ride
 // @access  Private
 const cancelRideByDriver = asyncHandler(async (req, res) => {
   const { rideId, reason } = req.body;
@@ -593,98 +685,6 @@ const cancelRideByDriver = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     message: 'Ride cancelled successfully'
-  });
-});
-
-// @desc    Mark as arrived
-// @route   POST /api/captains/arrive
-// @access  Private
-const markAsArrived = asyncHandler(async (req, res) => {
-  const { rideId } = req.body;
-  const captain = await Captain.findById(req.user._id);
-
-  if (!captain) {
-    res.status(404);
-    throw new Error('Captain not found');
-  }
-
-  const ride = await Ride.findById(rideId);
-  if (!ride) {
-    res.status(404);
-    throw new Error('Ride not found');
-  }
-
-  if (ride.captain.toString() !== captain._id.toString()) {
-    res.status(403);
-    throw new Error('Not authorized to update this ride');
-  }
-
-  if (ride.status !== 'accepted') {
-    res.status(400);
-    throw new Error('Ride is not in accepted state');
-  }
-
-  ride.status = 'arrived';
-  ride.arrivedAt = new Date();
-  await ride.save();
-
-  const io = getIO(); // Get io instance
-  // Emit arrived event
-  io.emit('captainArrived', {
-    rideId: ride._id,
-    captainId: captain._id,
-    userId: ride.user
-  });
-
-  res.json({
-    success: true,
-    data: ride
-  });
-});
-
-// @desc    Start ride
-// @route   POST /api/captains/start-ride
-// @access  Private
-const startRide = asyncHandler(async (req, res) => {
-  const { rideId } = req.body;
-  const captain = await Captain.findById(req.user._id);
-
-  if (!captain) {
-    res.status(404);
-    throw new Error('Captain not found');
-  }
-
-  const ride = await Ride.findById(rideId);
-  if (!ride) {
-    res.status(404);
-    throw new Error('Ride not found');
-  }
-
-  if (ride.captain.toString() !== captain._id.toString()) {
-    res.status(403);
-    throw new Error('Not authorized to update this ride');
-  }
-
-  if (ride.status !== 'arrived') {
-    res.status(400);
-    throw new Error('Ride is not in arrived state');
-  }
-
-  ride.status = 'in_progress';
-  ride.startedAt = new Date();
-  await ride.save();
-
-  const io = getIO(); // Get io instance
-  // Emit ride started event
-  io.emit('rideStarted', {
-    rideId: ride._id,
-    captainId: captain._id,
-    userId: ride.user
-  });
-
-  res.json({
-    success: true,
-    data: ride
   });
 });
 

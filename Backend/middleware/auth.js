@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const User = require('../models/user.model');
+const User = require('../models/user/User'); // Corrected path
 
 module.exports = async (req, res, next) => {
     try {
@@ -25,4 +25,4 @@ module.exports = async (req, res, next) => {
     } catch (error) {
         res.status(401).json({ message: 'Token is not valid' });
     }
-}; 
+};

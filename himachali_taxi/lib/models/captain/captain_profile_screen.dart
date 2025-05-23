@@ -134,6 +134,7 @@ class _CaptainProfileScreenState extends State<CaptainProfileScreen>
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body)['data'];
+        print('Captain data: $data');
 
         setState(() {
           // Handle profile image correctly

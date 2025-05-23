@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const User = require('../models/user.model');
+const User = require('../models/user/User'); // Corrected path to the User model
 const auth = require('../middleware/auth');
 
 // Register a new user
@@ -105,4 +105,4 @@ router.get('/me', auth, async (req, res) => {
     }
 });
 
-module.exports = router; 
+module.exports = router;

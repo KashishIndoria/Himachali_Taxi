@@ -11,9 +11,10 @@ const jwt = require('jsonwebtoken');
 dotenv.config();
 
 // Routes
-const authRoutes = require('./routes/auth.routes');
+// const authRoutes = require('./routes/auth.routes'); // Comment out or remove old auth routes
+const authApiRoutes = require('./routes/authroutes'); // Use the new auth routes
 const rideRoutes = require('./routes/ride.routes');
-const userRoutes = require('./routes/user.routes');
+// const userRoutes = require('./routes/user.routes');
 const captainRoutes = require('./routes/captainroutes');
 const locationRoutes = require('./routes/locationroutes');
 const profileRoutes = require('./routes/profileroutes');
@@ -175,9 +176,9 @@ io.on('connection', (socket) => {
 });
 
 // Routes
-app.use('/api/auth', authRoutes);
+app.use('/api/auth', authApiRoutes); // Use the new auth routes for /api/auth prefix
 app.use('/api/rides', rideRoutes);
-app.use('/api/users', userRoutes);
+// app.use('/api/users', userRoutes);
 app.use('/api/captain', captainRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/api/profile', profileRoutes);
