@@ -1,8 +1,10 @@
 import 'dart:convert';
-import 'dart:io' show Platform; // Import Platform
+import 'dart:io' show File, Platform; // Import Platform
 import 'package:flutter_dotenv/flutter_dotenv.dart'; // Import flutter_dotenv
 import 'package:himachali_taxi/utils/sf_manager.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
+import 'package:path/path.dart' as p; // Import the path package
 
 class AuthService {
   // Removed hardcoded host and base URL
@@ -143,6 +145,51 @@ class AuthService {
       await Future.delayed(const Duration(seconds: 1)); // Simulated API call
     } catch (e) {
       throw Exception('Failed to resend OTP: $e');
+    }
+  }
+
+  Future<String?> _uploadImage(File imageFile, String token) async {
+    try {
+      var request = http.MultipartRequest(
+        'POST',
+        Uri.parse(
+            '$_getBaseUrl()/api/profile/upload-image'), // Use your existing image upload endpoint
+      );
+      request.headers['Authorization'] = 'Bearer $token';
+      request.files.add(
+        await http.MultipartFile.fromPath(
+          'profileImage', // This 'field' name must match what your backend multer setup expects
+          imageFile.path,
+          contentType:
+              MediaType('image', p.extension(imageFile.path).substring(1)),
+        ),
+      );
+
+      var response = await request.send();
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final responseBody = await response.stream.bytesToString();
+        final decodedResponse = json.decode(responseBody);
+        // Assuming your upload endpoint returns { "status": "success", "imageUrl": "..." }
+        // or { "success": true, "data": { "imageUrl": "..." } }
+        if (decodedResponse['status'] == 'success' &&
+            decodedResponse['imageUrl'] != null) {
+          return decodedResponse['imageUrl'];
+        } else if (decodedResponse['success'] == true &&
+            decodedResponse['data']?['imageUrl'] != null) {
+          return decodedResponse['data']['imageUrl'];
+        }
+        print(
+            'Image upload response format not recognized or imageUrl missing.');
+        return null;
+      } else {
+        print('Image upload failed with status: ${response.statusCode}');
+        final responseBody = await response.stream.bytesToString();
+        print('Image upload error response: $responseBody');
+        return null;
+      }
+    } catch (e) {
+      print('Error uploading image: $e');
+      return null;
     }
   }
 

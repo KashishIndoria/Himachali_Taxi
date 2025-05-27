@@ -104,6 +104,7 @@ class _CaptainSignupScreenState extends State<CaptainSignupScreen> {
                   return null;
                 },
               ),
+              const SizedBox(height: 16),
               TextFormField(
                 controller: _vehicleNumberController,
                 textCapitalization: TextCapitalization.characters,

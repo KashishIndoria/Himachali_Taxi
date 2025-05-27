@@ -73,8 +73,20 @@ exports.captainSignup = async (req, res) => {
             password,
             phone,
             vehicleDetails,
-            isAvailable
+            isAvailable,
+            profileImage
         } = req.body;
+
+        // Basic validation
+        if (!firstName || !lastName || !email || !password || !phone) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Please provide all required fields: firstName, lastName, email, password, phone.'
+            });
+        }
+        if (vehicleDetails && typeof vehicleDetails !== 'object') {
+             return res.status(400).json({ status: 'error', message: 'vehicleDetails must be an object.' });
+        }
 
         // Check if captain exists
         const existingCaptain = await Captain.findOne({
@@ -100,10 +112,12 @@ exports.captainSignup = async (req, res) => {
             lastName,
             email,
             password,
+            phone,
             vehicleDetails : vehicleDetails || {},
             isAvailable: isAvailable || false,
             isVerified: false,
-            otp: { code: otp, expiresAt: otpExpiresAt }
+            otp: { code: otp, expiresAt: otpExpiresAt },
+            profileImage: profileImage || null
         });
 
         // Send verification email
