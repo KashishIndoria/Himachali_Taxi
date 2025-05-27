@@ -6,7 +6,7 @@ const protect = require('../middleware/authMiddleware');
 console.log("Available controller functions:", Object.keys(captainController));
 
 // Profile Management Routes
-router.get('/profile', protect, captainController.getCaptainProfile);
+router.get('/profile/:captainId', protect, captainController.getCaptainProfile);
 router.put('/profile', protect, captainController.updateCaptainProfile);
 router.put('/update-profile-image', protect, captainController.updateProfileImage);
 
